@@ -1,1 +1,1 @@
-{"at":"2026-10-17T11:07:14.827Z","steps":[{"name":"daily","fetched":0,"failed":0},{"name":"ticks","fetched":0,"skipped":32,"missing":0},{"name":"yahoo","points":839,"sessions":["20261016N:56✓"],"lastPrice":46140,"lastBarTime":"2026-10-16T20:59:00.000Z"}]}
+{"at":"2026-10-17T15:32:36.198Z","steps":[{"name":"daily","fetched":2,"failed":0},{"name":"ticks","fetched":0,"skipped":29,"missing":3},{"name":"yahoo","points":839,"sessions":["20261016N:56✓"],"lastPrice":46140,"lastBarTime":"2026-10-16T20:59:00.000Z"}]}
