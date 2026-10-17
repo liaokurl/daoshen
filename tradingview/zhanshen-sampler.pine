@@ -1,0 +1,29 @@
+//@version=6
+// 戰神通道取樣器（車干製）：讀取「台指期戰神」畫出的通道數值，列成表格；也可每根K收盤送出 Webhook。
+indicator("戰神通道取樣器", overlay = true)
+
+float up  = input.source(close, "通道上軌（選：台指期戰神: 通道上軌）")
+float mid = input.source(close, "通道中軌（選：台指期戰神: 通道中軌）")
+float lo  = input.source(close, "通道下軌（選：台指期戰神: 通道下軌）")
+int rows  = input.int(40, "表格顯示最近幾根", minval = 5, maxval = 60)
+bool hook = input.bool(false, "每根K收盤送出 Webhook 快訊")
+
+f(v) => str.tostring(v, "#.##")
+
+var table t = table.new(position.top_left, 8, 61, bgcolor = color.new(color.black, 0), border_color = color.gray, border_width = 1)
+if barstate.islast
+    hdr = array.from("時間", "開", "高", "低", "收", "上軌", "中軌", "下軌")
+    for c = 0 to 7
+        table.cell(t, c, 0, array.get(hdr, c), text_color = color.yellow, text_size = size.small)
+    for i = 0 to rows - 1
+        table.cell(t, 0, i + 1, str.format_time(time[i], "MM/dd HH:mm", "Asia/Taipei"), text_color = color.white, text_size = size.small)
+        table.cell(t, 1, i + 1, f(open[i]), text_color = color.white, text_size = size.small)
+        table.cell(t, 2, i + 1, f(high[i]), text_color = color.white, text_size = size.small)
+        table.cell(t, 3, i + 1, f(low[i]), text_color = color.white, text_size = size.small)
+        table.cell(t, 4, i + 1, f(close[i]), text_color = color.white, text_size = size.small)
+        table.cell(t, 5, i + 1, f(up[i]), text_color = color.orange, text_size = size.small)
+        table.cell(t, 6, i + 1, f(mid[i]), text_color = color.aqua, text_size = size.small)
+        table.cell(t, 7, i + 1, f(lo[i]), text_color = color.lime, text_size = size.small)
+
+if hook and barstate.isconfirmed
+    alert('{"source":"戰神通道","t":' + str.tostring(time_close) + ',"close":' + f(close) + ',"up":' + f(up) + ',"mid":' + f(mid) + ',"lo":' + f(lo) + '}', alert.freq_once_per_bar_close)
