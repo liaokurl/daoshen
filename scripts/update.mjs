@@ -8,8 +8,8 @@ import { createHash } from "node:crypto";
 import { fetchBuffer, taifexDailyZipUrl, fetchFutDataDown, fetchYahooChart, decodeBig5 } from "./lib/sources.mjs";
 import { parseDailyCsv, buildCalendar, expiryOverrides, contractDataset, bars15Of } from "./lib/dataset.mjs";
 import { ticksToSessions } from "../engine/bars.js";
-import { classifyTick, sessionAt, sessionStartMs, sessionEndMs, frontContract, nextTradingDate, SESSION, sessionKey } from "../engine/sessions.js";
-import { tpeParts, addDays, weekdayOf } from "../engine/time.js";
+import { classifyTick, sessionAt, sessionStartMs, sessionEndMs, frontContract, nextTradingDate, prevTradingDate, SESSION, sessionKey } from "../engine/sessions.js";
+import { tpeParts, tpeMs, addDays, weekdayOf } from "../engine/time.js";
 import { intradayTouchStudy, sessionCloseStudy } from "../engine/backtest.js";
 import { analyzeStructure } from "../engine/structure.js";
 import { buildPlan } from "../engine/plan.js";
@@ -126,7 +126,7 @@ function tpeMsOf(ymd, minute) {
 }
 
 // ---------- 3. Yahoo 盤中 ----------
-async function updateYahoo(frontFor) {
+async function updateYahoo(frontFor, calendar) {
   if (OFFLINE) return null;
   try {
     const json = await fetchYahooChart();
@@ -135,7 +135,8 @@ async function updateYahoo(frontFor) {
     const recs = new Map();
     let lastT = 0, lastPrice = null;
     for (let i = 0; i < ts.length; i += 1) {
-      const t = ts[i] * 1000;
+      // Yahoo 分K時間是「該分鐘結束時間」，減 1 分鐘當開始時間
+      const t = ts[i] * 1000 - 60_000;
       const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i], v = q.volume?.[i] ?? 0;
       if (![o, h, l, c].every(Number.isFinite)) continue;
       const parts = tpeParts(t);
@@ -150,8 +151,20 @@ async function updateYahoo(frontFor) {
       else { b[1] = Math.max(b[1], h); b[2] = Math.min(b[2], l); b[3] = c; b[4] += v; }
       if (t >= lastT) { lastT = t; lastPrice = c; }
     }
+    // Yahoo 把夜盤時間搬到「交易日前一天 15:00」：週五夜盤會被標成週日晚上。搬回真正開盤日。
+    for (const [key, rec] of [...recs.entries()]) {
+      if (rec.type !== "N") continue;
+      const actual = prevTradingDate(addDays(rec.start, 1), calendar);
+      if (actual === rec.start) continue;
+      const shift = tpeMs(actual) - tpeMs(rec.start);
+      if (lastT >= sessionStartMs(rec.start, "N") && lastT < sessionEndMs(rec.start, "N")) lastT += shift;
+      recs.delete(key);
+      rec.yahooStart = rec.start;
+      rec.start = actual;
+      recs.set(sessionKey(actual, "N"), rec);
+    }
     const metaPrice = Number(json.quote?.price ?? json.meta?.regularMarketPrice);
-    const quotedAt = (json.meta?.regularMarketTime ?? 0) * 1000;
+    const quotedAt = Date.parse(json.quote?.refreshedTs ?? "") || null;
     const out = [];
     for (const rec of recs.values()) {
       const end = sessionEndMs(rec.start, rec.type);
@@ -279,7 +292,7 @@ await updateDaily();
 let all = loadAll();
 await updateTicks(all.calendar);
 all = loadAll();
-const live = await updateYahoo(frontForFactory(all.calendar, all.expiry));
+const live = await updateYahoo(frontForFactory(all.calendar, all.expiry), all.calendar);
 all = loadAll();
 const stats = updateStats(all);
 const bundle = buildBundle(all, stats, live);
