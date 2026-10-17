@@ -92,7 +92,7 @@ function compute() {
     const liveTmf = B.tmf5.find(s => s.complete === false);
     const asOf5 = liveTmf && B.tmfLive?.lastBarTime ? B.tmfLive.lastBarTime + 60_000 : (b5.at(-1)?.end ?? 0);
     const done5 = b5.filter(b => b.end <= asOf5);
-    if (done5.length > 100) my = { sn: proSniper(done5), wo: washout(done5), last: done5.at(-1), live: Boolean(liveTmf) };
+    if (done5.length > 100) my = { sn: proSniper(done5), wo: washout(done5), last: done5.at(-1), live: Boolean(liveTmf), src: B.tmf5.find(s => s.start + s.type === done5.at(-1).key)?.source };
   }
   return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, chgLabel, dataAsOf, liveNow, R, now, sw, tt, summary, pcr, kg, my };
 }
@@ -431,7 +431,7 @@ function myCard(c) {
   return `<section class="card sword ${posCls}">
     <h2>我的指標｜微台 PRO v2.4.1 × 洗盤偵測（5 分K）</h2>
     <div class="verdict"><span class="side">${esc(d.action)}</span><span class="mode">${esc(d.position)}${d.entryPx ? `｜進場 ${fmt(d.entryPx)}` : ""}</span></div>
-    <p class="note">最後一根：${fmtDateTime(my.last.end)}${my.live ? "（盤中，Yahoo 微型台指近一）" : "（期交所微台逐筆）"}</p>
+    <p class="note">最後一根：${fmtDateTime(my.last.end)}${my.src === "official" ? "（期交所微台逐筆）" : "（Yahoo 微型台指近一，官方資料出來後自動取代）"}</p>
     <div class="dash">
       ${cell("市場型態", d.market)}${cell("高週期方向", d.htf, toneOf(d.htf))}${cell("本週期結構", d.local, toneOf(d.local))}${cell("Sniper狀態", d.sniper, toneOf(d.sniper))}
       ${cell("ADX / CHOP", d.adxChop)}${cell("停利分數 多／空", d.exitScores)}${cell("SuperTrend", fmt(d.superTrend))}${cell("紅綠趨勢線", fmt(d.redGreenLine))}
