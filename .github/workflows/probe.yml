@@ -17,4 +17,4 @@ jobs:
           git config user.name "daoshen-bot"
           git config user.email "daoshen-bot@users.noreply.github.com"
           git add -f probe/probe.json
-          git commit -m "探測結果" && git push
+          git commit -m "探測結果" && git pull --rebase && git push

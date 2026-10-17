@@ -19,7 +19,7 @@ const NOW = Number(process.env.NOW_MS ?? Date.now());
 const BACKFILL_MONTHS = Number(process.env.BACKFILL_MONTHS ?? 36);
 const OFFLINE = process.env.OFFLINE === "1";
 const report = { at: new Date(NOW).toISOString(), steps: [] };
-const step = (name, info) => { report.steps.push({ name, ...info }); console.log(`[${name}] ${JSON.stringify(info)}`); };
+const step = (name, info) => { report.steps.push({ name, ...info }); console.log(`::notice title=${name}::${JSON.stringify(info).slice(0, 900)}`); };
 
 const p = (...x) => join(DATA, ...x);
 const readJson = (f, fb = null) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return fb; } };
