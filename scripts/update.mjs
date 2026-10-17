@@ -190,7 +190,7 @@ async function updateSentiment() {
   const last = meta.sentimentFetched ?? 0;
   if (NOW - last < 90 * 60_000 && existsSync(p("pcr.json"))) return;
   try {
-    const start = addDays(today, -60);
+    const start = addDays(today, -30); // 期交所一次最多查一個月
     const rows = await fetchPcr(`${start.slice(0, 4)}/${start.slice(4, 6)}/${start.slice(6, 8)}`, `${today.slice(0, 4)}/${today.slice(4, 6)}/${today.slice(6, 8)}`);
     if (rows.length) writeJson(p("pcr.json"), { fetchedAt: NOW, rows });
     step("pcr", { rows: rows.length, last: rows.at(-1) });
