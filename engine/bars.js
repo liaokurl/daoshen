@@ -1,5 +1,5 @@
 // K 棒建構：逐筆 → 15 分 K（每盤固定格位）→ 30 / 60 分 K、全日盤日 K。
-import { SESSION, classifyTick, sessionKey, sessionStartMs } from "./sessions.js";
+import { classifyTick, sessionKey, sessionStartMs, slotsOf } from "./sessions.js";
 import { MIN } from "./time.js";
 
 /**
@@ -7,7 +7,7 @@ import { MIN } from "./time.js";
  * 欄位：成交日期,商品代號,到期月份(週別),成交時間,成交價格,成交數量(B+S),...
  * 回傳 Map(contract → Map(sessionKey → sessionRecord))
  */
-export function ticksToSessions(csvText, { product = "TX", contracts = null } = {}) {
+export function ticksToSessions(csvText, { product = "TX", contracts = null, res = 15 } = {}) {
   const out = new Map();
   let start = 0;
   const len = csvText.length;
@@ -27,14 +27,14 @@ export function ticksToSessions(csvText, { product = "TX", contracts = null } = 
     if (contracts && !contracts.includes(month)) continue;
     const price = Number(row[4]), qty = Number(row[5]);
     if (!Number.isFinite(price) || price <= 0) continue;
-    const slot = classifyTick(rawDate, clock);
+    const slot = classifyTick(rawDate, clock, res);
     if (!slot) continue;
     let byContract = out.get(month);
     if (!byContract) { byContract = new Map(); out.set(month, byContract); }
     const key = sessionKey(slot.start, slot.type);
     let rec = byContract.get(key);
     if (!rec) {
-      rec = { start: slot.start, type: slot.type, contract: month, source: "official", bars: new Array(SESSION[slot.type].slots15).fill(null), lastSec: new Array(SESSION[slot.type].slots15).fill(-1) };
+      rec = { start: slot.start, type: slot.type, contract: month, source: "official", res, bars: new Array(slotsOf(slot.type, res)).fill(null) };
       byContract.set(key, rec);
     }
     const sec = toSec(clock);
@@ -77,19 +77,20 @@ export function sessionToBars(rec, { prevClose = null, upTo = Infinity } = {}) {
   const first = rec.bars.find(Boolean);
   if (!first) return [];
   const base = sessionStartMs(rec.start, rec.type);
+  const res = rec.res ?? 15, W = res * MIN;
   const out = [];
   let last = prevClose ?? first[0];
   for (let i = 0; i < rec.bars.length; i += 1) {
-    const t = base + i * 15 * MIN;
+    const t = base + i * W;
     if (t >= upTo) break;
     const b = rec.bars[i];
     if (b) {
-      out.push({ t, end: t + 15 * MIN, o: b[0], h: b[1], l: b[2], c: b[3], v: b[4], key: sessionKey(rec.start, rec.type), type: rec.type, slot: i, filled: false });
+      out.push({ t, end: t + W, o: b[0], h: b[1], l: b[2], c: b[3], v: b[4], key: sessionKey(rec.start, rec.type), type: rec.type, slot: i, res, filled: false });
       last = b[3];
     } else {
       // 尚未有任何成交前、而且盤還沒結束的尾端不補（避免盤中捏造）
       if (rec.complete === false && i > lastFilledIndex(rec)) break;
-      out.push({ t, end: t + 15 * MIN, o: last, h: last, l: last, c: last, v: 0, key: sessionKey(rec.start, rec.type), type: rec.type, slot: i, filled: true });
+      out.push({ t, end: t + W, o: last, h: last, l: last, c: last, v: 0, key: sessionKey(rec.start, rec.type), type: rec.type, slot: i, res, filled: true });
     }
   }
   return out;
@@ -113,15 +114,16 @@ export function buildBars15(records, opts = {}) {
 
 /** 15 分 K 合成較大週期（每盤從開盤起算對齊；日盤 60 分 = 5 根、夜盤 = 14 根） */
 export function aggregate(bars15, minutes) {
-  const k = minutes / 15;
   const out = [];
   let cur = null;
   for (const b of bars15) {
+    const res = b.res ?? 15;
+    const k = minutes / res;
     const group = Math.floor(b.slot / k);
     const id = `${b.key}:${group}`;
     if (!cur || cur.id !== id) {
       if (cur) out.push(finish(cur));
-      cur = { id, t: b.t - (b.slot % k) * 15 * MIN, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, key: b.key, type: b.type, slot: group, parts: 1, k, filled: b.filled };
+      cur = { id, t: b.t - (b.slot % k) * res * MIN, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, key: b.key, type: b.type, slot: group, res: minutes, parts: 1, k, filled: b.filled };
     } else {
       cur.h = Math.max(cur.h, b.h); cur.l = Math.min(cur.l, b.l); cur.c = b.c; cur.v += b.v; cur.parts += 1;
       cur.filled = cur.filled && b.filled;
@@ -133,7 +135,7 @@ export function aggregate(bars15, minutes) {
 
 function finish(cur) {
   const { id, parts, k, ...bar } = cur;
-  bar.end = bar.t + k * 15 * MIN;
+  bar.end = bar.t + bar.res * MIN;
   bar.partial = parts < k; // 盤中尚未湊滿
   return bar;
 }

@@ -12,24 +12,29 @@ export const SESSION = {
  * rawDate: 成交日曆日 YYYYMMDD；clock: HHMMSS（可少前導 0）
  * 回傳 { type:'D'|'N', start:YYYYMMDD(盤開始日), slot } 或 null（非交易時段）
  */
-export function classifyTick(rawDate, clock) {
+export function classifyTick(rawDate, clock, res = 15) {
   const c = String(clock).trim().padStart(6, "0");
   const sec = Number(c.slice(0, 2)) * 3600 + Number(c.slice(2, 4)) * 60 + Number(c.slice(4, 6));
   if (!Number.isFinite(sec)) return null;
+  const w = res * 60;
   const daySt = SESSION.D.start * 60, dayEnd = daySt + SESSION.D.length * 60;
   const nightSt = SESSION.N.start * 60;
+  const maxD = SESSION.D.length / res - 1, maxN = SESSION.N.length / res - 1;
   if (sec >= daySt && sec <= dayEnd) {
-    return { type: "D", start: rawDate, slot: Math.min(19, Math.floor((sec - daySt) / 900)) };
+    return { type: "D", start: rawDate, slot: Math.min(maxD, Math.floor((sec - daySt) / w)) };
   }
   if (sec >= nightSt) {
-    return { type: "N", start: rawDate, slot: Math.min(55, Math.floor((sec - nightSt) / 900)) };
+    return { type: "N", start: rawDate, slot: Math.min(maxN, Math.floor((sec - nightSt) / w)) };
   }
   if (sec <= 5 * 3600) {
     const since = sec + 86400 - nightSt;
-    return { type: "N", start: addDays(rawDate, -1), slot: Math.min(55, Math.floor(since / 900)) };
+    return { type: "N", start: addDays(rawDate, -1), slot: Math.min(maxN, Math.floor(since / w)) };
   }
   return null;
 }
+
+/** 某解析度下每盤格數 */
+export const slotsOf = (type, res = 15) => SESSION[type].length / res;
 
 export const sessionKey = (start, type) => `${start}${type}`;
 
