@@ -154,3 +154,31 @@ details.card > .inner { padding: 0 16px 16px; }
   .quote .big { font-size: 46px; }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 }
+
+/* 分頁 */
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: var(--chip); padding: 4px; border-radius: 14px; position: sticky; top: 58px; z-index: 4; }
+.tabs button { border: 0; background: transparent; color: var(--muted); padding: 9px 0; border-radius: 10px; font-weight: 600; font-size: 15px; }
+.tabs button.on { background: var(--card); color: var(--ink); box-shadow: var(--shadow); }
+
+/* 刀神提示 */
+.sword { border-left: 6px solid var(--muted); }
+.sword.up { border-left-color: var(--up); }
+.sword.down { border-left-color: var(--down); }
+.sword.mixed { border-left-color: var(--mix); }
+.verdict { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.verdict .side { font-size: 34px; font-weight: 800; line-height: 1.1; }
+.sword.up .side { color: var(--up); } .sword.down .side { color: var(--down); } .sword.mixed .side { color: var(--mix); }
+.verdict .mode { font-size: 17px; font-weight: 700; }
+.say { margin: 8px 0 12px; font-size: 15px; }
+.swords { display: grid; gap: 6px; }
+.sword-row { display: grid; grid-template-columns: 78px 1fr 1fr; gap: 8px; align-items: center; padding: 10px; border-radius: 12px; background: var(--bg); }
+.sword-row .who b { display: block; font-size: 17px; }
+.sword-row .who span, .sword-row small { display: block; font-size: 12px; color: var(--muted); }
+.sword-row .val .p { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sword-row .pos { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sword-row .pos.above { color: var(--up); } .sword-row .pos.below { color: var(--down); }
+.facts { display: grid; gap: 6px; margin-top: 12px; }
+.facts > div { display: grid; grid-template-columns: 86px 1fr; gap: 2px 10px; font-size: 14px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.facts > div > span { color: var(--muted); grid-row: span 2; }
+.facts small { color: var(--muted); font-size: 12px; }
+.lvl.kg .p { font-size: 22px; }

@@ -5,7 +5,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { fetchBuffer, taifexDailyZipUrl, fetchFutDataDown, fetchYahooChart, decodeBig5 } from "./lib/sources.mjs";
+import { fetchBuffer, taifexDailyZipUrl, fetchFutDataDown, fetchYahooChart, decodeBig5, fetchPcr, fetchFearGreed } from "./lib/sources.mjs";
+import { swordStudy } from "../engine/sword.js";
 import { parseDailyCsv, buildCalendar, expiryOverrides, contractDataset, bars15Of } from "./lib/dataset.mjs";
 import { ticksToSessions } from "../engine/bars.js";
 import { classifyTick, sessionAt, sessionStartMs, sessionEndMs, frontContract, nextTradingDate, prevTradingDate, SESSION, sessionKey } from "../engine/sessions.js";
@@ -183,6 +184,25 @@ async function updateYahoo(frontFor, calendar) {
   }
 }
 
+// ---------- 籌碼／情緒 ----------
+async function updateSentiment() {
+  if (OFFLINE) return;
+  const last = meta.sentimentFetched ?? 0;
+  if (NOW - last < 90 * 60_000 && existsSync(p("pcr.json"))) return;
+  try {
+    const start = addDays(today, -60);
+    const rows = await fetchPcr(`${start.slice(0, 4)}/${start.slice(4, 6)}/${start.slice(6, 8)}`, `${today.slice(0, 4)}/${today.slice(4, 6)}/${today.slice(6, 8)}`);
+    if (rows.length) writeJson(p("pcr.json"), { fetchedAt: NOW, rows });
+    step("pcr", { rows: rows.length, last: rows.at(-1) });
+  } catch (e) { step("pcr-error", { error: String(e).slice(0, 200) }); }
+  try {
+    const f = await fetchFearGreed();
+    writeJson(p("fng.json"), { fetchedAt: NOW, ...f });
+    step("fng", f);
+  } catch (e) { step("fng-error", { error: String(e).slice(0, 200) }); }
+  meta.sentimentFetched = NOW;
+}
+
 // ---------- 載入 ----------
 function loadAll() {
   const dailyRows = list(p("daily")).flatMap(f => readJson(p("daily", f))?.rows ?? []);
@@ -218,10 +238,11 @@ function updateStats(all) {
     return { contract: c, sessions: ds.summaries.map(s => ({ ...s, key: `${s.td}${s.type}`, front: ds.fronts.has(`${s.td}${s.type}`) })), daily: ds.daily };
   });
   const session = sessionCloseStudy(sessInput);
+  const sword = swordStudy(intraInput.map(x => ({ ...x, bars15: x.bars15 })));
   const tdList = all.calendar;
   const stats = {
     hash, computedAt: NOW,
-    intraday: intraday.byType, session,
+    intraday: intraday.byType, session, sword,
     coverage: {
       intradayFrom: intraInput.flatMap(x => x.bars15).reduce((m, b) => Math.min(m, b.t), Infinity),
       intradayTo: intraInput.flatMap(x => x.bars15).reduce((m, b) => Math.max(m, b.t), 0),
@@ -281,7 +302,9 @@ function buildBundle(all, stats, live) {
       dailyThrough: all.calendar.at(-1) ?? null,
       provisional: sessions15.filter(s => s.source === "yahoo").map(s => sessionKey(s.start, s.type)),
     },
-    stats: stats && { intraday: stats.intraday, session: stats.session, coverage: stats.coverage, computedAt: stats.computedAt },
+    stats: stats && { intraday: stats.intraday, session: stats.session, sword: stats.sword, coverage: stats.coverage, computedAt: stats.computedAt },
+    pcr: readJson(p("pcr.json")),
+    fng: readJson(p("fng.json")),
     plans,
     report: report.steps,
   };
@@ -289,6 +312,7 @@ function buildBundle(all, stats, live) {
 
 // ---------- main ----------
 await updateDaily();
+await updateSentiment();
 let all = loadAll();
 await updateTicks(all.calendar);
 all = loadAll();

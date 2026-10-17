@@ -11,6 +11,10 @@ export const LEVEL_TYPES = {
   prevLow: "前一盤低點",
   swingLow: "60分擺盪低點",
   swingHigh: "60分擺盪高點",
+  kgR1: "葵哥 回測點1",
+  kgR2: "葵哥 回測點2",
+  kgUp: "葵哥 上延伸1",
+  kgDn: "葵哥 下延伸1",
   random: "隨機線（對照組）",
 };
 
@@ -79,6 +83,10 @@ export function intradayTouchStudy(contracts, { horizon = 12, rFactor = 0.5, rMi
           ["prevLow", prevLow],
           ["swingLow", lastLow?.price ?? null],
           ["swingHigh", lastHigh?.price ?? null],
+          ["kgR1", prevHigh - pr / 3],
+          ["kgR2", prevHigh - (2 * pr) / 3],
+          ["kgUp", prevHigh + pr / 3],
+          ["kgDn", prevLow - pr / 3],
           ...randoms.map((v, k) => [`random:${k}`, v]),
         ];
         const prevClose = i > 0 ? b15[i - 1].c : null;
@@ -148,6 +156,8 @@ export function sessionCloseStudy(contracts, { randomPerSession = 4, seed = 11 }
       const avgRange = mean(ranges.slice(-20));
       const levels = [
         ["prevHigh", prev.h], ["prevLow", prev.l], ["d1_20", k >= 0 ? dma20[k] : null],
+        ["kgR1", prev.h - (prev.h - prev.l) / 3], ["kgR2", prev.h - (2 * (prev.h - prev.l)) / 3],
+        ["kgUp", prev.h + (prev.h - prev.l) / 3], ["kgDn", prev.l - (prev.h - prev.l) / 3],
         ...Array.from({ length: randomPerSession }, (_, r) => [`random:${r}`, s.o + (rand() * 2 - 1) * 1.2 * avgRange]),
       ];
       for (const [name, L] of levels) {

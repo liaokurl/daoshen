@@ -42,3 +42,21 @@ export async function fetchYahooChart(symbol = "WTX&") {
   const buf = await fetchBuffer(url, { headers: { accept: "application/json", "accept-language": "zh-TW,zh;q=0.9" } }, { retries: 1, timeoutMs: 20_000 });
   return JSON.parse(buf.toString("utf8"));
 }
+
+/** 期交所 台指選擇權 Put/Call Ratio（比率欄位是百分比，這裡換成倍數） */
+export async function fetchPcr(start, end) {
+  const body = new URLSearchParams({ down_type: "", queryStartDate: start, queryEndDate: end });
+  const text = decodeBig5(await fetchBuffer("https://www.taifex.com.tw/cht/3/pcRatioDown", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }));
+  if (!text.startsWith("日期")) throw new Error(`PCR_NOT_CSV: ${text.slice(0, 80)}`);
+  return text.split(/\r?\n/).slice(1).filter(Boolean).map(l => {
+    const r = l.split(",");
+    return { date: r[0].replace(/\D/g, ""), putVol: Number(r[1]), callVol: Number(r[2]), ratioVol: Number(r[3]) / 100, putOI: Number(r[4]), callOI: Number(r[5]), ratioOI: Number(r[6]) / 100 };
+  }).filter(r => /^\d{8}$/.test(r.date) && Number.isFinite(r.ratioVol)).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** CNN Fear & Greed（美股情緒） */
+export async function fetchFearGreed() {
+  const buf = await fetchBuffer("https://production.dataviz.cnn.io/index/fearandgreed/graphdata", { headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36", accept: "application/json", referer: "https://edition.cnn.com/" } }, { retries: 1, timeoutMs: 20_000 });
+  const j = JSON.parse(buf.toString("utf8")).fear_and_greed;
+  return { score: j.score, rating: j.rating, timestamp: j.timestamp, previousClose: j.previous_close, week: j.previous_1_week, month: j.previous_1_month };
+}

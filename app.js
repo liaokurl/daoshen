@@ -5,11 +5,16 @@ import { LEVEL_TYPES, VERDICT_TEXT } from "./engine/backtest.js";
 import { SESSION, sessionKey, sessionEndMs, sessionStartMs } from "./engine/sessions.js";
 import { fmtYmd, fmtDateTime, fmtTime, weekdayOf } from "./engine/time.js";
 import { smaSeries } from "./engine/indicators.js";
+import { threeSwords, turtle, pcrView, swordSummary, SWORD_MODES } from "./engine/sword.js";
+import { kuigeModel } from "./engine/kuige.js";
+import { loadSignals } from "./signals.js";
 
-const VERSION = "車干製V1.0";
+const VERSION = "車干製V1.1";
 const $app = document.getElementById("app");
 const MANUAL_KEY = "daoshen-manual-price";
-const state = { bundle: null, manual: null, error: null };
+const state = { bundle: null, manual: null, error: null, tab: readTab(), signals: null };
+const TABS = [["dao", "刀神"], ["kui", "葵哥"], ["plan", "計畫"], ["more", "資料"]];
+function readTab() { try { return localStorage.getItem("daoshen-tab") || "dao"; } catch { return "dao"; } }
 
 const fmt = v => (v == null || !Number.isFinite(v) ? "—" : Math.round(v).toLocaleString("en-US"));
 const signed = v => (v == null || !Number.isFinite(v) ? "—" : `${v > 0 ? "+" : v < 0 ? "−" : "±"}${Math.abs(Math.round(v)).toLocaleString("en-US")}`);
@@ -36,6 +41,7 @@ async function load() {
   }
   state.manual = readManual();
   render();
+  loadSignals().then(s => { state.signals = s; render(); });
 }
 
 function compute() {
@@ -70,7 +76,15 @@ function compute() {
   const doneSums = B.summaries.filter(s => s.complete !== false && `${s.start}${s.type}` !== target.key);
   const prevClose = (liveNow ? doneSums.at(-1) : doneSums.at(-2))?.c ?? null;
   const chgLabel = liveNow ? "比上一盤收盤" : `${SESSION[doneSums.at(-1)?.type ?? "D"].label}漲跌`;
-  return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, chgLabel, dataAsOf, liveNow, R, now };
+  const h1Done = analysis.frames["60m"].done;
+  const sw = threeSwords(h1Done, price);
+  const h4Done = aggregate(completeBars, 240).filter(b => b.end <= dataAsOf && !b.partial);
+  const tt = turtle(h4Done);
+  const summary = swordSummary(sw, tt);
+  const pcr = pcrView(B.pcr?.rows);
+  const lastDone = doneSums.at(-1);
+  const kg = kuigeModel({ prevSession: liveNow ? lastDone : lastDone, currentBars: liveNow ? sessionBars : [], price });
+  return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, chgLabel, dataAsOf, liveNow, R, now, sw, tt, summary, pcr, kg };
 }
 
 function render() {
@@ -84,16 +98,18 @@ function render() {
     $app.innerHTML = `<section class="card error">計算失敗：${esc(e.message)}</section>`;
     return;
   }
+  const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
+  const body = {
+    dao: [swordCard(c), signalsCard(c), structureCard(c), chartCard(c)],
+    kui: [kuigeCard(c)],
+    plan: [planCard(c), reviewCard(c)],
+    more: [extCard(c), statsCard(c), statusCard(c)],
+  }[state.tab] ?? [];
   $app.innerHTML = [
     state.error ? `<section class="card error">${esc(state.error)}</section>` : "",
     quoteCard(c),
-    structureCard(c),
-    planCard(c),
-    chartCard(c),
-    reviewCard(c),
-    extCard(c),
-    statsCard(c),
-    statusCard(c),
+    tabs,
+    ...body,
   ].join("");
   bind();
 }
@@ -320,7 +336,103 @@ function statusCard(c) {
   </div></details>`;
 }
 
+// ---------- 刀神：三刀流＋海龜＋PCR ----------
+function swordCard(c) {
+  const { sw, tt, summary, pcr, price, B } = c;
+  const S = B.stats?.sword ?? {};
+  const sideCls = { 偏多: "up", 偏空: "down", 短多: "mixed", 短空: "mixed", 觀望: "neutral" }[summary.side] ?? "neutral";
+  const row = (who, role, l) => {
+    const above = price != null && l.ma != null ? price >= l.ma : null;
+    return `<div class="sword-row">
+      <div class="who"><b>${who}</b><span>${role}</span></div>
+      <div class="val"><span class="p">${fmt(l.ma)}</span><small>MA${l.n}｜${slopeTxt(l.slope)}</small></div>
+      <div class="pos ${above == null ? "" : above ? "above" : "below"}">${above == null ? "資料不足" : above ? `現價在上 ${fmt(price - l.ma)}` : `現價在下 ${fmt(l.ma - price)}`}<small>收盤門檻 ${fmt(l.threshold)}</small></div>
+    </div>`;
+  };
+  const liveDiff = sw.live !== sw.confirmed ? `<p class="note"><b>盤中估算：</b>若現在收盤，會變成「${esc(SWORD_MODES[sw.live].label)}」（尚未確認）</p>` : "";
+  const st = S[sw.confirmed];
+  const stat = st && st.n ? `<p class="note">回測：過去 ${st.n} 次切換到「${esc(SWORD_MODES[sw.confirmed].label)}」後 ${st.horizon} 小時，朝該方向走的比例 ${pct(st.winRate)}，平均 ${signed(st.avgMove)} 點${st.n < 20 ? "（樣本不足，僅供參考）" : ""}</p>` : "";
+  const alignTxt = { BULL: "多頭排列（20＞60＞240）", BEAR: "空頭排列（20＜60＜240）", MIXED: "均線糾結（未排列）" }[sw.align];
+  const fng = B.fng;
+  return `<section class="card sword ${sideCls}">
+    <h2>刀神提示｜60分 三刀流 × 4小時海龜</h2>
+    <div class="verdict"><span class="side">${esc(summary.side)}</span><span class="mode">${esc(summary.mode.label)}</span></div>
+    <p class="say">${esc(summary.text)}</p>
+    ${liveDiff}
+    <div class="swords">
+      ${row("劉備", "戰略方向", sw.liu)}
+      ${row("關羽", "進場扣板機", sw.guan)}
+      ${row("張飛", "停利收兵", sw.zhang)}
+    </div>
+    <div class="facts">
+      <div><span>排列</span><b>${alignTxt}</b></div>
+      <div><span>4小時海龜</span><b>${esc(tt.label)}</b><small>${tt.upper != null ? `突破上軌 ${fmt(tt.upper)}｜跌破下軌 ${fmt(tt.lower)}` : ""}</small></div>
+      ${sw.exit ? `<div><span>張飛停利</span><b>${esc(sw.exit.text)}</b><small>門檻 ${fmt(sw.exit.level)}${sw.exit.hit ? "｜<b>上一根已觸發</b>" : ""}</small></div>` : ""}
+      ${pcr ? `<div><span>PCR 5日均</span><b>${pcr.avg.toFixed(2)}｜${esc(pcr.label)}</b><small>最新 ${fmtYmd(pcr.last.date).slice(5)}：${pcr.last.ratioVol.toFixed(2)}（賣權量÷買權量）｜只校正部位，不決定方向</small></div>` : ""}
+      ${fng ? `<div><span>美股恐懼貪婪</span><b>${Math.round(fng.score)}｜${esc(fngTxt(fng.rating))}</b><small>前一日 ${Math.round(fng.previousClose)}、一週前 ${Math.round(fng.week)}（CNN）</small></div>` : ""}
+    </div>
+    <ul class="rules">${sw.flips.map(f => `<li>${esc(f.who)}：${esc(f.text)}<span class="st">門檻 ${fmt(f.level)}${price != null ? `，現價${distTxt(price, f.level)}` : ""}</span></li>`).join("")}</ul>
+    ${stat}
+    <p class="note">「劉備看方向，關羽負責打，張飛負責收。」狀態以已收盤的 60 分K 為準；不要自己當諸葛亮亂預測。</p>
+  </section>`;
+}
+const fngTxt = r => ({ "extreme fear": "極度恐懼", fear: "恐懼", neutral: "中性", greed: "貪婪", "extreme greed": "極度貪婪" })[r] ?? r;
+
+// ---------- 葵哥：前盤三等分 ----------
+function kuigeCard(c) {
+  const { kg, price, B } = c;
+  if (!kg.fixed) return `<section class="card"><h2>葵哥｜前盤三等分</h2><p class="note">沒有前一盤資料。</p></section>`;
+  const S = B.stats ?? {};
+  const statFor = id => {
+    const a = S.intraday?.[id], b = S.session?.[id], base = S.session?.random;
+    const v = b && b.n >= 20 ? b : a;
+    if (!v) return "";
+    const kind = v === b ? `收盤守住 ${pct(b.rate)}（隨機 ${pct(base?.rate)}，${b.n} 次）` : `碰到後先回頭 ${pct(a.rate)}（${a.n} 次）`;
+    return `<div><span class="badge ${v.verdict}">${esc(VERDICT_TEXT[v.verdict])}</span>${kind}</div>`;
+  };
+  const items = [];
+  let marked = price == null;
+  for (const l of kg.fixed.levels) {
+    if (!marked && price > l.price) { items.push(nowMarker(price)); marked = true; }
+    const cls = l.price > (price ?? 0) ? "res" : "sup";
+    items.push(`<div class="lvl ${cls} kg"><span class="p">${fmt(l.price)}</span><span class="role">${esc(l.label)}</span><span class="dist">距現價 ${signed(price == null ? null : l.price - price)} 點｜每口 ${money(price == null ? 0 : l.price - price)}</span><div class="stat">${statFor(l.id)}</div></div>`);
+  }
+  if (!marked) items.push(nowMarker(price));
+  const cur = kg.current ? `<details class="sub"><summary class="note">目前盤動態三等分（盤中會變）</summary>${kg.current.levels.map(l => `<div class="note">${esc(l.label)} ${fmt(l.price)}</div>`).join("")}</details>` : "";
+  return `<section class="card">
+    <h2>葵哥｜前盤三等分（${esc(kg.prevLabel ?? "")}）</h2>
+    <p class="expect">前盤 高 <b>${fmt(kg.fixed.high)}</b>／低 <b>${fmt(kg.fixed.low)}</b>，振幅 ${fmt(kg.fixed.range)}，每格 ${fmt(kg.fixed.step)} 點。現價位置：<b>${esc(kg.zone?.label ?? "—")}</b></p>
+    <div class="ladder">${items.join("")}</div>
+    ${cur}
+    <p class="note">只保留葵哥最原始的「前盤高低三等分」，不再疊 Pivot、CDP、Fib。每條線的成績單同樣跟隨機線比較。</p>
+  </section>`;
+}
+
+// ---------- TradingView 快訊 ----------
+function signalsCard(c) {
+  const sig = state.signals;
+  if (!sig || !sig.configured) return "";
+  if (sig.error) return `<section class="card"><h2>TradingView 快訊</h2><p class="note">讀不到快訊（${esc(sig.error)}）</p></section>`;
+  const list = sig.items.slice(0, 6);
+  if (!list.length) return `<section class="card"><h2>TradingView 快訊</h2><p class="note">還沒有收到快訊。</p></section>`;
+  const latest = list[0];
+  const cls = latest.side === "多" ? "up" : latest.side === "空" ? "down" : "neutral";
+  return `<section class="card sword ${cls}">
+    <h2>TradingView 快訊</h2>
+    <div class="verdict"><span class="side">${esc(latest.side ?? "—")}</span><span class="mode">${esc(latest.source ?? "")}${latest.price ? `｜${fmt(latest.price)}` : ""}</span></div>
+    <p class="say">${esc(latest.text)}</p>
+    <p class="note">${fmtDateTime(latest.at)}${latest.price && c.price != null ? `｜距現價 ${signed(c.price - latest.price)} 點` : ""}</p>
+    <div class="review">${list.slice(1).map(s => `<div class="item">${fmtDateTime(s.at)}｜<b>${esc(s.side ?? "")}</b> ${esc(s.text)}</div>`).join("")}</div>
+  </section>`;
+}
+
 function bind() {
+  document.querySelectorAll("[data-tab]").forEach(b => b.addEventListener("click", () => {
+    state.tab = b.dataset.tab;
+    try { localStorage.setItem("daoshen-tab", state.tab); } catch { /* 忽略 */ }
+    render();
+    window.scrollTo({ top: 0 });
+  }));
   document.getElementById("manual")?.addEventListener("submit", e => {
     e.preventDefault();
     const v = Number(document.getElementById("manual-input").value.replace(/[^\d.]/g, ""));
