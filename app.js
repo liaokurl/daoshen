@@ -66,8 +66,11 @@ function compute() {
   }
   const sessionBars = completeBars.filter(b => b.key === target.key);
   const revision = reviseIntraday(plan, { bars15Session: sessionBars, price, analysis, R });
-  const prevClose = B.summaries.filter(s => s.complete !== false && `${s.start}${s.type}` !== target.key).at(-1)?.c ?? null;
-  return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, dataAsOf, liveNow, R, now };
+  // 盤中：跟上一盤收盤比；休市：顯示剛結束那一盤的漲跌
+  const doneSums = B.summaries.filter(s => s.complete !== false && `${s.start}${s.type}` !== target.key);
+  const prevClose = (liveNow ? doneSums.at(-1) : doneSums.at(-2))?.c ?? null;
+  const chgLabel = liveNow ? "比上一盤收盤" : `${SESSION[doneSums.at(-1)?.type ?? "D"].label}漲跌`;
+  return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, chgLabel, dataAsOf, liveNow, R, now };
 }
 
 function render() {
@@ -101,7 +104,7 @@ function sessionLabel(s) {
 }
 
 function quoteCard(c) {
-  const { B, price, autoPrice, manual, prevClose, liveNow } = c;
+  const { B, price, autoPrice, manual, prevClose, liveNow, chgLabel } = c;
   const chg = price != null && prevClose != null ? price - prevClose : null;
   const live = B.live;
   const src = manual
@@ -115,7 +118,7 @@ function quoteCard(c) {
     B.status.provisional.length ? `<span class="chip warn">含 Yahoo 暫存 K 棒</span>` : "",
   ].join("");
   return `<section class="card quote">
-    <div class="quote-row"><span class="big">${fmt(price)}</span><span class="chg ${chg > 0 ? "up" : chg < 0 ? "down" : ""}">${signed(chg)}</span></div>
+    <div class="quote-row"><span class="big">${fmt(price)}</span><span class="chg ${chg > 0 ? "up" : chg < 0 ? "down" : ""}">${signed(chg)}</span><span class="meta">${esc(chgLabel)}</span></div>
     <div class="meta">${esc(src)}</div>
     <div class="chips">${chips}</div>
     <form class="manual" id="manual">
@@ -204,7 +207,7 @@ function levelRow(l, price) {
   return `<div class="lvl ${cls}">
     <span class="p">${fmt(l.price)}<small class="meta">${zone}</small></span><span class="role">${l.role}</span>
     <span class="name">${esc(l.label)}</span>
-    <span class="dist">距現價 ${signed(d)} 點｜每口 ${money(d ?? 0)}</span>
+    <span class="dist">距現價 ${signed(d)} 點｜每口 ${money(d ?? 0)}${l.inReach === false ? "｜<b>超出一般振幅，今天不太會碰到</b>" : ""}</span>
     <div class="stat">${statLines(l)}</div>
     ${l.status && l.status !== "未碰" ? `<span class="status">本盤：${esc(l.status)}</span>` : ""}
   </div>`;

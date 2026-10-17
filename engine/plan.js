@@ -98,8 +98,11 @@ export function buildPlan({ analysis, session, prevSession, summaries, stats, co
   const score = z => (isCore(z) ? 0 : 1) + (z.verdict === "EDGE" ? 0 : z.verdict === "NO_EDGE" ? 2 : 1);
   const best = list => [...list].sort((a, b) => score(a) - score(b) || Math.abs(a.distance) - Math.abs(b.distance))[0];
   // 上下各取最近的一條，讓你知道兩邊的第一道關卡
-  if (above[0]) picked.push(above[0]);
-  if (below[0]) picked.push(below[0]);
+  // 一般振幅內沒有線時，仍給最近的一條，並標示「一般振幅碰不到」
+  const nearAbove = above[0] ?? zones.filter(z => z.price > P).sort((a, b) => a.price - b.price)[0];
+  const nearBelow = below[0] ?? zones.filter(z => z.price <= P).sort((a, b) => b.price - a.price)[0];
+  if (nearAbove) picked.push(nearAbove);
+  if (nearBelow) picked.push(nearBelow);
   const minGap = Math.max(20, 0.5 * atr60);
   const rest = zones.filter(z => z.inReach && !picked.includes(z) && picked.every(q => Math.abs(q.price - z.price) >= minGap));
   while (picked.length < maxLines && rest.length) {
