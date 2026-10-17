@@ -44,7 +44,7 @@ jobs:
         run: |
           git config user.name "daoshen-bot"
           git config user.email "daoshen-bot@users.noreply.github.com"
-          for f in data/daily data/ticks data/provisional data/plans data/stats.json data/meta.json data/pcr.json data/fng.json; do if [ -e "$f" ]; then git add "$f"; fi; done
+          for f in data/daily data/ticks data/provisional data/provisional5 data/plans data/stats.json data/meta.json data/pcr.json data/fng.json; do if [ -e "$f" ]; then git add "$f"; fi; done
           git add -f data/last-run.json || true
           if ! git diff --cached --quiet; then
             git commit -m "資料更新 $(TZ=Asia/Taipei date '+%m/%d %H:%M')"

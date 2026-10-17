@@ -1,7 +1,7 @@
-// 車干製V1.1：資料走網路優先，畫面檔案可離線
-const CACHE = "daoshen-v1.1";
+// 車干製V1.2：資料走網路優先，畫面檔案可離線
+const CACHE = "daoshen-v1.2";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon.svg",
-  "signals.js", "config.json", "engine/sword.js", "engine/kuige.js", "engine/bars.js", "engine/sessions.js", "engine/time.js", "engine/indicators.js", "engine/structure.js", "engine/backtest.js", "engine/plan.js"];
+  "signals.js", "config.json", "engine/sword.js", "engine/kuige.js", "engine/pine.js", "engine/myind.js", "engine/bars.js", "engine/sessions.js", "engine/time.js", "engine/indicators.js", "engine/structure.js", "engine/backtest.js", "engine/plan.js"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", e => {

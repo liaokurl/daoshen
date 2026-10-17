@@ -92,3 +92,40 @@ function filled(s) {
 export function bars15Of(ds, opts) {
   return buildBars15(ds.sessions15, opts);
 }
+
+/**
+ * 微台 5 分K 連續序列（跟 TradingView TMF1! B-ADJ 一樣：換月時把舊合約往新合約價位平移）。
+ * tmfRecords: 各檔案的 tmf5 紀錄（多合約）＋ Yahoo 暫存（近月）
+ */
+export function tmfContinuous(tmfRecords, { calendar, expiry }) {
+  const byKey = new Map(); // key -> Map(contract -> rec)
+  for (const r of tmfRecords) {
+    const key = sessionKey(r.start, r.type);
+    if (!byKey.has(key)) byKey.set(key, new Map());
+    const m = byKey.get(key), prev = m.get(r.contract);
+    // 官方逐筆優先於 Yahoo；同來源取資料較完整者
+    const rank = x => (x.source === "official" ? 1000 : 0) + x.bars.filter(Boolean).length;
+    if (!prev || rank(r) > rank(prev)) m.set(r.contract, r);
+  }
+  const keys = [...byKey.keys()].sort((a, b) => sessionStartMs(a.slice(0, 8), a.slice(8)) - sessionStartMs(b.slice(0, 8), b.slice(8)));
+  const out = [];
+  let offset = 0, nextFront = null;
+  for (let i = keys.length - 1; i >= 0; i -= 1) {
+    const key = keys[i], start = key.slice(0, 8), type = key.slice(8);
+    const td = tdOf(start, type, calendar);
+    const front = frontContract(td, expiry);
+    const m = byKey.get(key);
+    const rec = m.get(front) ?? [...m.values()].sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))[0];
+    if (!rec) continue;
+    if (nextFront && rec.contract !== nextFront) {
+      const newer = m.get(nextFront);
+      const lastClose = x => x?.bars.filter(Boolean).at(-1)?.[3];
+      const diff = lastClose(newer) != null && lastClose(rec) != null ? lastClose(newer) - lastClose(rec) : 0;
+      offset += diff;
+    }
+    nextFront = rec.contract;
+    const adj = offset;
+    out.unshift({ ...rec, td, adjusted: adj, bars: adj ? rec.bars.map(b => (b ? [b[0] + adj, b[1] + adj, b[2] + adj, b[3] + adj, b[4]] : null)) : rec.bars });
+  }
+  return out;
+}

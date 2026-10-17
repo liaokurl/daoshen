@@ -7,9 +7,11 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { fetchBuffer, taifexDailyZipUrl, fetchFutDataDown, fetchYahooChart, decodeBig5, fetchPcr, fetchFearGreed } from "./lib/sources.mjs";
 import { swordStudy } from "../engine/sword.js";
-import { parseDailyCsv, buildCalendar, expiryOverrides, contractDataset, bars15Of } from "./lib/dataset.mjs";
+import { parseDailyCsv, buildCalendar, expiryOverrides, contractDataset, bars15Of, tmfContinuous } from "./lib/dataset.mjs";
+import { buildBars15 } from "../engine/bars.js";
+import { proSniper, tradeSummary } from "../engine/myind.js";
 import { ticksToSessions } from "../engine/bars.js";
-import { classifyTick, sessionAt, sessionStartMs, sessionEndMs, frontContract, nextTradingDate, prevTradingDate, SESSION, sessionKey } from "../engine/sessions.js";
+import { classifyTick, sessionAt, sessionStartMs, sessionEndMs, frontContract, nextTradingDate, prevTradingDate, SESSION, sessionKey, slotsOf } from "../engine/sessions.js";
 import { tpeParts, tpeMs, addDays, weekdayOf } from "../engine/time.js";
 import { intradayTouchStudy, sessionCloseStudy } from "../engine/backtest.js";
 import { analyzeStructure } from "../engine/structure.js";
@@ -89,10 +91,10 @@ async function updateTicks(calendarGuess) {
     const file = p("ticks", `${d}.json`);
     const have = readJson(file);
     // 已經有日盤＋完整夜盤的檔就不再抓
-    if (have?.complete) { skipped += 1; continue; }
+    if (have?.complete && have.tmf5) { skipped += 1; continue; }
     // 當天的檔：日盤收盤後才可能完整；其餘時間每小時最多試一次
     const lastTry = meta.tickFetched[d] ?? 0;
-    if (have && NOW - lastTry < 50 * 60_000) { skipped += 1; continue; }
+    if (have?.tmf5 && NOW - lastTry < 50 * 60_000) { skipped += 1; continue; }
     if (meta.tickMissing[d] && NOW - meta.tickMissing[d] < 3 * 3600_000 && d !== today) { skipped += 1; continue; }
     if (d === today && minute < 14 * 60 && !have && minute > 6 * 60) { /* 早上可試抓夜盤 */ }
     try {
@@ -110,7 +112,12 @@ async function updateTicks(calendarGuess) {
       const keep = [...new Set(sessions.map(s => s.contract))].sort((a, b) => vol(b) - vol(a)).slice(0, 2);
       const kept = sessions.filter(s => keep.includes(s.contract));
       const hasDay = kept.some(s => s.type === "D" && sessionEndMs(s.start, s.type) <= NOW);
-      writeJson(file, { file: d, fetchedAt: NOW, complete: hasDay && NOW - tpeMsOf(d, 14 * 60) > 0, sessions: kept.map(s => ({ ...s, complete: sessionEndMs(s.start, s.type) <= NOW - 60_000 })) });
+      // 微台 TMF 5 分K（給使用者自己的 TradingView 指標用），留成交量前兩大合約（換月調整要用）
+      const tmfMap = ticksToSessions(text, { product: "TMF", res: 5 });
+      const tmfVol = c => [...tmfMap.get(c).values()].reduce((a, r) => a + r.bars.reduce((x, b) => x + (b ? b[4] : 0), 0), 0);
+      const tmfKeep = [...tmfMap.keys()].sort((a, b) => tmfVol(b) - tmfVol(a)).slice(0, 2);
+      const tmf5 = tmfKeep.flatMap(c => [...tmfMap.get(c).values()]).map(r => ({ ...r, volume: tmfVol(r.contract), complete: sessionEndMs(r.start, r.type) <= NOW - 60_000 }));
+      writeJson(file, { file: d, fetchedAt: NOW, complete: hasDay && NOW - tpeMsOf(d, 14 * 60) > 0, sessions: kept.map(s => ({ ...s, complete: sessionEndMs(s.start, s.type) <= NOW - 60_000 })), tmf5 });
       fetched += 1;
       delete meta.tickMissing[d];
     } catch (e) {
@@ -127,61 +134,76 @@ function tpeMsOf(ymd, minute) {
 }
 
 // ---------- 3. Yahoo 盤中 ----------
+/** Yahoo 分K → 盤別紀錄（res 分鐘） */
+function yahooToRecords(json, res, calendar, source) {
+  const ts = json.timestamp ?? [];
+  const q = json.indicators?.quote?.[0] ?? {};
+  const recs = new Map();
+  let lastT = 0, lastPrice = null;
+  for (let i = 0; i < ts.length; i += 1) {
+    // Yahoo 分K時間是「該分鐘結束時間」，減 1 分鐘當開始時間
+    const t = ts[i] * 1000 - 60_000;
+    const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i], v = q.volume?.[i] ?? 0;
+    if (![o, h, l, c].every(Number.isFinite)) continue;
+    const parts = tpeParts(t);
+    const clock = `${String(Math.floor(parts.minute / 60)).padStart(2, "0")}${String(parts.minute % 60).padStart(2, "0")}00`;
+    const slot = classifyTick(parts.ymd, clock, res);
+    if (!slot) continue;
+    const key = sessionKey(slot.start, slot.type);
+    let rec = recs.get(key);
+    if (!rec) { rec = { start: slot.start, type: slot.type, source, res, bars: new Array(slotsOf(slot.type, res)).fill(null) }; recs.set(key, rec); }
+    const b = rec.bars[slot.slot];
+    if (!b) rec.bars[slot.slot] = [o, h, l, c, v];
+    else { b[1] = Math.max(b[1], h); b[2] = Math.min(b[2], l); b[3] = c; b[4] += v; }
+    if (t >= lastT) { lastT = t; lastPrice = c; }
+  }
+  // Yahoo 把夜盤時間搬到「交易日前一天 15:00」：週五夜盤會被標成週日晚上。搬回真正開盤日。
+  for (const [key, rec] of [...recs.entries()]) {
+    if (rec.type !== "N") continue;
+    const actual = prevTradingDate(addDays(rec.start, 1), calendar);
+    if (actual === rec.start) continue;
+    const shift = tpeMs(actual) - tpeMs(rec.start);
+    if (lastT >= sessionStartMs(rec.start, "N") && lastT < sessionEndMs(rec.start, "N")) lastT += shift;
+    recs.delete(key);
+    rec.yahooStart = rec.start;
+    rec.start = actual;
+    recs.set(sessionKey(actual, "N"), rec);
+  }
+  for (const rec of recs.values()) rec.complete = NOW >= sessionEndMs(rec.start, rec.type) + 2 * 60_000;
+  return { recs: [...recs.values()], lastT, lastPrice, points: ts.length };
+}
+
 async function updateYahoo(frontFor, calendar) {
   if (OFFLINE) return null;
+  let live = null;
   try {
-    const json = await fetchYahooChart();
-    const ts = json.timestamp ?? [];
-    const q = json.indicators?.quote?.[0] ?? {};
-    const recs = new Map();
-    let lastT = 0, lastPrice = null;
-    for (let i = 0; i < ts.length; i += 1) {
-      // Yahoo 分K時間是「該分鐘結束時間」，減 1 分鐘當開始時間
-      const t = ts[i] * 1000 - 60_000;
-      const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i], v = q.volume?.[i] ?? 0;
-      if (![o, h, l, c].every(Number.isFinite)) continue;
-      const parts = tpeParts(t);
-      const clock = `${String(Math.floor(parts.minute / 60)).padStart(2, "0")}${String(parts.minute % 60).padStart(2, "0")}00`;
-      const slot = classifyTick(parts.ymd, clock);
-      if (!slot) continue;
-      const key = sessionKey(slot.start, slot.type);
-      let rec = recs.get(key);
-      if (!rec) { rec = { start: slot.start, type: slot.type, source: "yahoo", bars: new Array(SESSION[slot.type].slots15).fill(null) }; recs.set(key, rec); }
-      const b = rec.bars[slot.slot];
-      if (!b) rec.bars[slot.slot] = [o, h, l, c, v];
-      else { b[1] = Math.max(b[1], h); b[2] = Math.min(b[2], l); b[3] = c; b[4] += v; }
-      if (t >= lastT) { lastT = t; lastPrice = c; }
-    }
-    // Yahoo 把夜盤時間搬到「交易日前一天 15:00」：週五夜盤會被標成週日晚上。搬回真正開盤日。
-    for (const [key, rec] of [...recs.entries()]) {
-      if (rec.type !== "N") continue;
-      const actual = prevTradingDate(addDays(rec.start, 1), calendar);
-      if (actual === rec.start) continue;
-      const shift = tpeMs(actual) - tpeMs(rec.start);
-      if (lastT >= sessionStartMs(rec.start, "N") && lastT < sessionEndMs(rec.start, "N")) lastT += shift;
-      recs.delete(key);
-      rec.yahooStart = rec.start;
-      rec.start = actual;
-      recs.set(sessionKey(actual, "N"), rec);
-    }
+    const json = await fetchYahooChart("WTX&");
+    const { recs, lastT, lastPrice, points } = yahooToRecords(json, 15, calendar, "yahoo");
     const metaPrice = Number(json.quote?.price ?? json.meta?.regularMarketPrice);
     const quotedAt = Date.parse(json.quote?.refreshedTs ?? "") || null;
-    const out = [];
-    for (const rec of recs.values()) {
-      const end = sessionEndMs(rec.start, rec.type);
-      rec.complete = NOW >= end + 2 * 60_000;
+    for (const rec of recs) {
       rec.contract = frontFor(rec.start, rec.type);
-      out.push(rec);
       // 盤結束後把暫存寫進 repo，下一盤的盤前計畫才用得到（官方逐筆檔出來後會被取代）
       if (rec.complete) writeJson(p("provisional", `${sessionKey(rec.start, rec.type)}.json`), rec);
     }
-    const live = { fetchedAt: NOW, lastBarTime: lastT || null, lastPrice: Number.isFinite(metaPrice) ? metaPrice : lastPrice, quotedAt: quotedAt || lastT || null, sessions: out.filter(r => !r.complete), source: "Yahoo奇摩股市 台指期近一（分鐘走勢，可能延遲）" };
-    step("yahoo", { points: ts.length, sessions: out.map(r => `${r.start}${r.type}:${r.bars.filter(Boolean).length}${r.complete ? "✓" : "…"}`), lastPrice: live.lastPrice, lastBarTime: lastT ? new Date(lastT).toISOString() : null });
-    return live;
+    live = { fetchedAt: NOW, lastBarTime: lastT || null, lastPrice: Number.isFinite(metaPrice) ? metaPrice : lastPrice, quotedAt: quotedAt || lastT || null, sessions: recs.filter(r => !r.complete), source: "Yahoo奇摩股市 台指期近一（分鐘走勢，可能延遲）" };
+    step("yahoo", { points, sessions: recs.map(r => `${r.start}${r.type}:${r.bars.filter(Boolean).length}${r.complete ? "✓" : "…"}`), lastPrice: live.lastPrice, lastBarTime: lastT ? new Date(lastT).toISOString() : null });
   } catch (e) {
     step("yahoo-error", { error: String(e).slice(0, 200) });
-    return null;
   }
+  try {
+    const json = await fetchYahooChart("WTM&");
+    const { recs, lastT, lastPrice, points } = yahooToRecords(json, 5, calendar, "yahoo-tmf");
+    for (const rec of recs) {
+      rec.contract = frontFor(rec.start, rec.type);
+      if (rec.complete) writeJson(p("provisional5", `${sessionKey(rec.start, rec.type)}.json`), rec);
+    }
+    if (live) live.tmf = { lastBarTime: lastT || null, lastPrice, sessions: recs.filter(r => !r.complete) };
+    step("yahoo-tmf", { points, sessions: recs.map(r => `${r.start}${r.type}:${r.bars.filter(Boolean).length}${r.complete ? "✓" : "…"}`), lastPrice });
+  } catch (e) {
+    step("yahoo-tmf-error", { error: String(e).slice(0, 200) });
+  }
+  return live;
 }
 
 // ---------- 籌碼／情緒 ----------
@@ -208,9 +230,10 @@ function loadAll() {
   const dailyRows = list(p("daily")).flatMap(f => readJson(p("daily", f))?.rows ?? []);
   const tickSessions = list(p("ticks")).flatMap(f => readJson(p("ticks", f))?.sessions ?? []);
   const provisional = list(p("provisional")).map(f => readJson(p("provisional", f))).filter(Boolean);
+  const tmfRecords = [...list(p("ticks")).flatMap(f => readJson(p("ticks", f))?.tmf5 ?? []), ...list(p("provisional5")).map(f => readJson(p("provisional5", f))).filter(Boolean)];
   const calendar = buildCalendar(dailyRows, tickSessions);
   const expiry = expiryOverrides(dailyRows, calendar);
-  return { dailyRows, tickSessions, provisional, calendar, expiry };
+  return { dailyRows, tickSessions, provisional, tmfRecords, calendar, expiry };
 }
 
 function frontForFactory(calendar, expiry) {
@@ -239,10 +262,19 @@ function updateStats(all) {
   });
   const session = sessionCloseStudy(sessInput);
   const sword = swordStudy(intraInput.map(x => ({ ...x, bars15: x.bars15 })));
+  let sniper = null;
+  try {
+    const series = tmfContinuous(all.tmfRecords.filter(r => r.source === "official" && r.complete !== false), all);
+    const b5 = buildBars15(series);
+    if (b5.length > 300) {
+      const res = proSniper(b5);
+      sniper = { summary: tradeSummary(res.trades), trades: res.trades.closed.slice(-40), from: b5[0].t, to: b5.at(-1).end, bars: b5.length };
+    }
+  } catch (e) { step("sniper-error", { error: String(e).slice(0, 200) }); }
   const tdList = all.calendar;
   const stats = {
     hash, computedAt: NOW,
-    intraday: intraday.byType, session, sword,
+    intraday: intraday.byType, session, sword, sniper,
     coverage: {
       intradayFrom: intraInput.flatMap(x => x.bars15).reduce((m, b) => Math.min(m, b.t), Infinity),
       intradayTo: intraInput.flatMap(x => x.bars15).reduce((m, b) => Math.max(m, b.t), 0),
@@ -302,7 +334,9 @@ function buildBundle(all, stats, live) {
       dailyThrough: all.calendar.at(-1) ?? null,
       provisional: sessions15.filter(s => s.source === "yahoo").map(s => sessionKey(s.start, s.type)),
     },
-    stats: stats && { intraday: stats.intraday, session: stats.session, sword: stats.sword, coverage: stats.coverage, computedAt: stats.computedAt },
+    stats: stats && { intraday: stats.intraday, session: stats.session, sword: stats.sword, sniper: stats.sniper, coverage: stats.coverage, computedAt: stats.computedAt },
+    tmf5: tmfContinuous([...all.tmfRecords, ...(live?.tmf?.sessions ?? [])], all).filter(r => r.td >= (all.calendar.at(-12) ?? "0")),
+    tmfLive: live?.tmf ? { lastBarTime: live.tmf.lastBarTime, lastPrice: live.tmf.lastPrice } : null,
     pcr: readJson(p("pcr.json")),
     fng: readJson(p("fng.json")),
     plans,

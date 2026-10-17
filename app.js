@@ -8,8 +8,9 @@ import { smaSeries } from "./engine/indicators.js";
 import { threeSwords, turtle, pcrView, swordSummary, SWORD_MODES } from "./engine/sword.js";
 import { kuigeModel } from "./engine/kuige.js";
 import { loadSignals } from "./signals.js";
+import { proSniper, washout } from "./engine/myind.js";
 
-const VERSION = "車干製V1.1";
+const VERSION = "車干製V1.2";
 const $app = document.getElementById("app");
 const MANUAL_KEY = "daoshen-manual-price";
 const state = { bundle: null, manual: null, error: null, tab: readTab(), signals: null };
@@ -84,7 +85,16 @@ function compute() {
   const pcr = pcrView(B.pcr?.rows);
   const lastDone = doneSums.at(-1);
   const kg = kuigeModel({ prevSession: liveNow ? lastDone : lastDone, currentBars: liveNow ? sessionBars : [], price });
-  return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, chgLabel, dataAsOf, liveNow, R, now, sw, tt, summary, pcr, kg };
+  // 使用者自己的指標：微台 5 分K
+  let my = null;
+  if (B.tmf5?.length) {
+    const b5 = buildBars15(B.tmf5);
+    const liveTmf = B.tmf5.find(s => s.complete === false);
+    const asOf5 = liveTmf && B.tmfLive?.lastBarTime ? B.tmfLive.lastBarTime + 60_000 : (b5.at(-1)?.end ?? 0);
+    const done5 = b5.filter(b => b.end <= asOf5);
+    if (done5.length > 100) my = { sn: proSniper(done5), wo: washout(done5), last: done5.at(-1), live: Boolean(liveTmf) };
+  }
+  return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, chgLabel, dataAsOf, liveNow, R, now, sw, tt, summary, pcr, kg, my };
 }
 
 function render() {
@@ -100,7 +110,7 @@ function render() {
   }
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
   const body = {
-    dao: [swordCard(c), signalsCard(c), structureCard(c), chartCard(c)],
+    dao: [swordCard(c), myCard(c), signalsCard(c), structureCard(c), chartCard(c)],
     kui: [kuigeCard(c)],
     plan: [planCard(c), reviewCard(c)],
     more: [extCard(c), statsCard(c), statusCard(c)],
@@ -405,6 +415,37 @@ function kuigeCard(c) {
     <div class="ladder">${items.join("")}</div>
     ${cur}
     <p class="note">只保留葵哥最原始的「前盤高低三等分」，不再疊 Pivot、CDP、Fib。每條線的成績單同樣跟隨機線比較。</p>
+  </section>`;
+}
+
+// ---------- 我的 TradingView 指標（App 內重算） ----------
+function myCard(c) {
+  const my = c.my;
+  if (!my) return "";
+  const d = my.sn.dash, w = my.wo, S = c.B.stats?.sniper;
+  const posCls = d.position === "持有多單" ? "up" : d.position === "持有空單" ? "down" : "neutral";
+  const cell = (k, v, cls = "") => `<div><span>${k}</span><b class="${cls}">${esc(v)}</b></div>`;
+  const toneOf = v => (/多|↑|突破站穩|支撐$/.test(v) ? "t-up" : /空|↓|跌破|承壓/.test(v) ? "t-down" : "");
+  const sigs = my.sn.signals.slice(-6).reverse().map(s => `<div class="item">${fmtDateTime(s.t)}｜<b class="${/多/.test(s.label) && !/停利/.test(s.label) ? "t-up" : /空/.test(s.label) && !/停利/.test(s.label) ? "t-down" : ""}">${esc(s.label)}</b> 點位 ${fmt(s.price)}</div>`).join("");
+  const bt = S?.summary ? `<p class="note">回測（預設參數，${fmtYmd(new Date(S.from + 8 * 3600e3).toISOString().slice(0, 10).replaceAll("-", "")).slice(5)} 起 ${S.summary.n} 筆）：勝率 ${pct(S.summary.winRate)}，合計 ${signed(S.summary.total)} 點（每口 ${S.summary.total >= 0 ? "" : "−"}${money(S.summary.total)}），平均每筆 ${signed(S.summary.avg)} 點，最好 ${signed(S.summary.best)}／最差 ${signed(S.summary.worst)}。未扣手續費與滑價。</p>` : "";
+  return `<section class="card sword ${posCls}">
+    <h2>我的指標｜微台 PRO v2.4.1 × 洗盤偵測（5 分K）</h2>
+    <div class="verdict"><span class="side">${esc(d.action)}</span><span class="mode">${esc(d.position)}${d.entryPx ? `｜進場 ${fmt(d.entryPx)}` : ""}</span></div>
+    <p class="note">最後一根：${fmtDateTime(my.last.end)}${my.live ? "（盤中，Yahoo 微型台指近一）" : "（期交所微台逐筆）"}</p>
+    <div class="dash">
+      ${cell("市場型態", d.market)}${cell("高週期方向", d.htf, toneOf(d.htf))}${cell("本週期結構", d.local, toneOf(d.local))}${cell("Sniper狀態", d.sniper, toneOf(d.sniper))}
+      ${cell("ADX / CHOP", d.adxChop)}${cell("停利分數 多／空", d.exitScores)}${cell("SuperTrend", fmt(d.superTrend))}${cell("紅綠趨勢線", fmt(d.redGreenLine))}
+    </div>
+    <div class="dash two-col">
+      ${cell("洗盤：市場狀態", w.state)}
+      ${cell("關鍵壓力", `${fmt(w.res1)}（${w.res1Status}）`, toneOf(w.res1Status ?? ""))}
+      ${cell("關鍵支撐", `${fmt(w.sup1)}（${w.sup1Status}）`, toneOf(w.sup1Status ?? ""))}
+      ${cell("次要", w.lines.filter(x => !x.main).map(x => `${x.tag} ${fmt(x.price)}`).join("、") || "—")}
+    </div>
+    ${w.marks.length ? `<p class="note">最近洗盤訊號：${w.marks.slice(-3).reverse().map(m => `${fmtDateTime(m.t)} ${m.label} ${fmt(m.price)}`).join("；")}</p>` : ""}
+    <div class="review">${sigs}</div>
+    ${bt}
+    <p class="note">照你的 Pine 原始碼在 App 裡重算（預設參數、狙擊融合模式），洗盤指標的四條支撐壓力已和你的 TradingView 截圖逐一核對一致。</p>
   </section>`;
 }
 
