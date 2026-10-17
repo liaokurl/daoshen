@@ -1,0 +1,64 @@
+name: 更新資料並發布
+on:
+  schedule:
+    # UTC 週一 00:00 ～ 週五 23:45 每 15 分鐘 = 台北 週一 08:00 ～ 週六 07:45（涵蓋週五夜盤）
+    - cron: "*/15 * * * 1-5"
+  push:
+    branches: [main]
+    paths-ignore: ["data/**", "README.md"]
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: "日行情回補月數"
+        required: false
+        default: "36"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 測試
+        run: node --test tests/*.test.mjs
+      - name: 抓資料、回測、封存盤前計畫
+        env:
+          BACKFILL_MONTHS: ${{ github.event.inputs.backfill || '36' }}
+        run: node scripts/update.mjs
+      - name: 儲存官方資料與計畫
+        run: |
+          git config user.name "daoshen-bot"
+          git config user.email "daoshen-bot@users.noreply.github.com"
+          git add data/daily data/ticks data/provisional data/plans data/stats.json data/meta.json 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "資料更新 $(TZ=Asia/Taipei date '+%m/%d %H:%M')"
+            git pull --rebase --autostash || true
+            git push || echo "push 失敗，下次再存"
+          fi
+      - name: 組網站
+        run: |
+          mkdir -p _site/data
+          cp index.html app.js style.css manifest.webmanifest sw.js icon.svg _site/
+          cp -r engine _site/
+          cp data/bundle.json _site/data/
+          cp data/last-run.json _site/data/ 2>/dev/null || true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
