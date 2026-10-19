@@ -199,3 +199,34 @@ export function washout(bars, { bbLen = 20, bbMult = 2, chopLen = 14, chopThresh
     marks: marks.slice(-10),
   };
 }
+
+/** 加權移動平均（Pine ta.wma） */
+function wmaArr(src, n) {
+  const den = (n * (n + 1)) / 2;
+  return src.map((_, i) => {
+    if (i < n - 1) return null;
+    let a = 0;
+    for (let k = 0; k < n; k += 1) a += src[i - k] * (n - k);
+    return a / den;
+  });
+}
+
+/**
+ * 傑哥「台指期戰神」通道（近似版，用截圖數值反推，誤差約 1～3 點）：
+ * 上軌＝最高價 WMA24、中軌＝收盤 WMA20、下軌＝最低價 WMA24。
+ * 方向：收盤穿出上軌→偏多、跌破下軌→偏空，沒穿出對側就維持原方向。
+ */
+export function zhanshenBand(bars, { upLen = 24, midLen = 20, loLen = 24 } = {}) {
+  const H = bars.map(b => b.h), L = bars.map(b => b.l), C = bars.map(b => b.c);
+  const up = wmaArr(H, upLen), mid = wmaArr(C, midLen), lo = wmaArr(L, loLen);
+  let dir = 0, since = null, flipPrice = null;
+  const flips = [];
+  for (let i = 0; i < bars.length; i += 1) {
+    if (up[i] == null) continue;
+    let nd = dir;
+    if (C[i] > up[i]) nd = 1; else if (C[i] < lo[i]) nd = -1;
+    if (nd !== dir) { if (dir !== 0) flips.push({ t: bars[i].end, side: nd, price: C[i] }); dir = nd; since = bars[i].end; flipPrice = C[i]; }
+  }
+  const i = bars.length - 1;
+  return { dir, since, flipPrice, up: up[i], mid: mid[i], lo: lo[i], close: C[i], flips: flips.slice(-8) };
+}

@@ -9,9 +9,9 @@ import { threeSwords, turtle, pcrView, swordSummary, SWORD_MODES } from "./engin
 import { kuigeModel } from "./engine/kuige.js";
 import { loadSignals } from "./signals.js";
 import { fetchLive, applyLive } from "./live.js";
-import { proSniper, washout } from "./engine/myind.js";
+import { proSniper, washout, zhanshenBand } from "./engine/myind.js";
 
-const VERSION = "車干製V1.3";
+const VERSION = "車干製V1.4";
 const $app = document.getElementById("app");
 const MANUAL_KEY = "daoshen-manual-price";
 const state = { base: null, cfg: null, liveInfo: null, loading: false, bundle: null, manual: null, error: null, tab: readTab(), signals: null };
@@ -109,7 +109,7 @@ function compute() {
     const liveTmf = B.tmf5.find(s => s.complete === false);
     const asOf5 = liveTmf && B.tmfLive?.lastBarTime ? B.tmfLive.lastBarTime + 60_000 : (b5.at(-1)?.end ?? 0);
     const done5 = b5.filter(b => b.end <= asOf5);
-    if (done5.length > 100) my = { sn: proSniper(done5), wo: washout(done5), last: done5.at(-1), live: Boolean(liveTmf), src: B.tmf5.find(s => s.start + s.type === done5.at(-1).key)?.source };
+    if (done5.length > 100) my = { sn: proSniper(done5), wo: washout(done5), zs: zhanshenBand(done5), last: done5.at(-1), live: Boolean(liveTmf), src: B.tmf5.find(s => s.start + s.type === done5.at(-1).key)?.source };
   }
   return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, chgLabel, dataAsOf, liveNow, R, now, sw, tt, summary, pcr, kg, my };
 }
@@ -129,7 +129,7 @@ function render() {
   }
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
   const body = {
-    dao: [swordCard(c), myCard(c), signalsCard(c), structureCard(c), chartCard(c)],
+    dao: [swordCard(c), zsCard(c), myCard(c), signalsCard(c), structureCard(c), chartCard(c)],
     kui: [kuigeCard(c)],
     plan: [planCard(c), reviewCard(c)],
     more: [extCard(c), statsCard(c), statusCard(c)],
@@ -470,6 +470,27 @@ function myCard(c) {
     <div class="review">${sigs}</div>
     ${bt}
     <p class="note">照你的 Pine 原始碼在 App 裡重算（預設參數、狙擊融合模式），洗盤指標的四條支撐壓力已和你的 TradingView 截圖逐一核對一致。</p>
+  </section>`;
+}
+
+// ---------- 傑哥戰神帶狀（近似） ----------
+function zsCard(c) {
+  const z = c.my?.zs;
+  if (!z || z.up == null) return "";
+  const cls = z.dir > 0 ? "up" : z.dir < 0 ? "down" : "neutral";
+  const px = c.price ?? z.close;
+  const pos = px > z.up ? "在帶狀上方" : px < z.lo ? "在帶狀下方" : "在帶狀裡面";
+  const flipNeed = z.dir < 0 ? `收盤站上上軌 ${fmt(z.up)} 才翻多（還差 ${fmt(z.up - px)} 點）` : z.dir > 0 ? `收盤跌破下軌 ${fmt(z.lo)} 才翻空（還差 ${fmt(px - z.lo)} 點）` : "等收盤穿出任一邊";
+  return `<section class="card sword ${cls}">
+    <h2>傑哥戰神帶狀（5 分K，近似）</h2>
+    <div class="verdict"><span class="side">${z.dir > 0 ? "偏多" : z.dir < 0 ? "偏空" : "未定"}</span><span class="mode">${z.since ? `${fmtDateTime(z.since)} 翻向，翻向價 ${fmt(z.flipPrice)}` : ""}</span></div>
+    <div class="dash">
+      <div><span>上軌</span><b>${fmt(z.up)}</b></div><div><span>中軌</span><b>${fmt(z.mid)}</b></div>
+      <div><span>下軌</span><b>${fmt(z.lo)}</b></div><div><span>現價</span><b>${fmt(px)}｜${pos}</b></div>
+    </div>
+    <p class="say">${esc(flipNeed)}</p>
+    <p class="note">最近翻向：${z.flips.slice(-5).reverse().map(f => `${fmtDateTime(f.t)} ${f.side > 0 ? "翻多" : "翻空"} ${fmt(f.price)}`).join("；") || "—"}</p>
+    <p class="note">用你截圖的數值反推的公式（最高價 WMA24／收盤 WMA20／最低價 WMA24），跟傑哥原版大約差 1～3 點。傑哥的多空訊號通常在帶狀翻向後 0～45 分鐘才出現，他另有一道確認條件。</p>
   </section>`;
 }
 
