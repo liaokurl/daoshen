@@ -54,7 +54,7 @@ jobs:
       - name: 組網站
         run: |
           mkdir -p _site/data
-          cp index.html app.js signals.js live.js config.json style.css manifest.webmanifest sw.js icon.svg _site/
+          cp index.html app.js signals.js live.js config.json style.css manifest.webmanifest sw.js icon.svg icon-*.png logo.png _site/
           cp -r engine _site/
           cp data/bundle.json _site/data/
           cp data/last-run.json _site/data/ 2>/dev/null || true
