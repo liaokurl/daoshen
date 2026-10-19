@@ -210,3 +210,10 @@ details.card > .inner { padding: 0 16px 16px; }
 .layout-tip { margin: 0 4px 10px; }
 
 .brand .logo { width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0; box-shadow: 0 0 0 1px var(--line); }
+
+.flips { display: grid; gap: 4px; margin: 6px 0; font-variant-numeric: tabular-nums; }
+.flips .fr { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: baseline; padding: 7px 10px; border-radius: 10px; background: var(--bg); font-size: 14px; }
+.flips .fr b { font-size: 16px; text-align: right; min-width: 78px; }
+.flips .fr small { display: block; font-size: 11px; font-weight: 500; color: var(--muted); }
+.flips .fr.open { outline: 1px dashed var(--line); }
+.flips .fr.sum { background: transparent; border-top: 1px solid var(--line); border-radius: 0; font-weight: 700; }

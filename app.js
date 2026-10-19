@@ -629,6 +629,25 @@ function ceCard(c) {
   </section>`;
 }
 
+/** 每次翻向的損益：翻向價進場，下一次翻向價出場；最後一筆用現價算浮動損益（每筆扣 0 點，未含手續費） */
+function flipTable(flips, px) {
+  if (!flips?.length) return `<p class="note">最近還沒有翻向紀錄。</p>`;
+  const rows = flips.map((f, i) => {
+    const exit = flips[i + 1]?.price ?? px;
+    const pnl = exit == null ? null : (exit - f.price) * f.side;
+    return { ...f, pnl, open: !flips[i + 1] };
+  });
+  const closed = rows.filter(r => !r.open && r.pnl != null);
+  const tot = closed.reduce((a, r) => a + r.pnl, 0), win = closed.filter(r => r.pnl > 0).length;
+  const tone = v => (v > 0 ? "t-up" : v < 0 ? "t-down" : "");
+  const shown = rows.slice(-10).reverse();
+  return `<div class="flips">
+    ${shown.map(r => `<div class="fr${r.open ? " open" : ""}"><span>${fmtDateTime(r.t)}</span><span class="${r.side > 0 ? "t-up" : "t-down"}">${r.side > 0 ? "翻多" : "翻空"} ${fmt(r.price)}</span><b class="${tone(r.pnl)}">${r.pnl == null ? "—" : `${signed(r.pnl)} 點`}${r.open ? "<small>持有中</small>" : ""}</b></div>`).join("")}
+    ${closed.length ? `<div class="fr sum"><span>已結算 ${closed.length} 筆</span><span>勝率 ${Math.round(win / closed.length * 100)}%</span><b class="${tone(tot)}">${signed(tot)} 點</b></div>` : ""}
+  </div>
+  <p class="note">每筆＝在翻向價進場、下一次翻向價出場（反手），最上面一筆是目前持有中的浮動損益。統計範圍是 App 現有的近 12 個交易日 5 分K，沒扣手續費與滑價。</p>`;
+}
+
 /** 持倉醒目標示：持有多單／空單＋進場點位＋目前損益 */
 function posBadge(side, entry, price) {
   if (!side || entry == null) return "";
@@ -655,7 +674,7 @@ function zsCard(c) {
       <div><span>下軌</span><b>${fmt(z.lo)}</b></div><div><span>現價</span><b>${fmt(px)}｜${pos}</b></div>
     </div>
     <p class="say">${esc(flipNeed)}</p>
-    <p class="note">最近翻向：${z.flips.slice(-5).reverse().map(f => `${fmtDateTime(f.t)} ${f.side > 0 ? "翻多" : "翻空"} ${fmt(f.price)}`).join("；") || "—"}</p>
+    ${flipTable(z.flips, px)}
     <p class="note">帶狀公式由你的截圖反推（最高價 WMA24／收盤 WMA20／最低價 WMA24），跟原版差約 1～3 點。翻向規則「2 根 5 分K 收在帶狀另一側（中間沒有收回原方向那一側）」：對照傑哥 10/16、10/19 共 10 筆訊號，方向與筆數全部一致，時間多數相同或差 1 根，少數晚 2～5 根。</p>
   </section>`;
 }

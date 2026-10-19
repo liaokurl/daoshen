@@ -234,7 +234,7 @@ export function zhanshenBand(bars, { upLen = 24, midLen = 20, loLen = 24, confir
     }
   }
   const i = bars.length - 1;
-  return { dir, since, flipPrice, pending: pend ? { side: pend, count: cnt, need: confirm } : null, up: up[i], mid: mid[i], lo: lo[i], close: C[i], flips: flips.slice(-8) };
+  return { dir, since, flipPrice, pending: pend ? { side: pend, count: cnt, need: confirm } : null, up: up[i], mid: mid[i], lo: lo[i], close: C[i], flips: flips.slice(-30) };
 }
 
 /**
