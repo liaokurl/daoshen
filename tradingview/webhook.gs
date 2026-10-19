@@ -127,13 +127,13 @@ function monitor() {
       const win = bars.slice(i - 23, i + 1);
       const up = wma_(win.map(x => x.h), 24), lo = wma_(win.map(x => x.l), 24);
       const raw = b.c > up ? 1 : b.c < lo ? -1 : 0;
-      if (raw !== 0 && raw !== st.dir) { st.pend = raw; st.cnt += 1; }
+      if (raw !== 0 && raw !== st.dir) { st.cnt = raw === st.pend ? st.cnt + 1 : 1; st.pend = raw; }
       else if (raw !== 0 && raw === st.dir) { st.pend = 0; st.cnt = 0; }
       const timeTxt = Utilities.formatDate(new Date(b.t + 300000), 'Asia/Taipei', 'HH:mm');
       if (st.pend && st.cnt >= 2) {
         const was = st.dir;
         st.dir = st.pend; st.pend = 0; st.cnt = 0;
-        if (!first && was !== 0) notify_(`戰神帶狀翻${st.dir > 0 ? '多' : '空'}｜微台 ${fmt_(b.c)}`, `${timeTxt} 收盤確認（第 2 根收在帶狀${st.dir > 0 ? '上方' : '下方'}）\n上軌 ${fmt_(up)}／下軌 ${fmt_(lo)}`, st.dir > 0 ? 'red_circle' : 'green_circle', 5);
+        if (!first) notify_(`戰神帶狀翻${st.dir > 0 ? '多' : '空'}｜微台 ${fmt_(b.c)}`, `${timeTxt} 收盤確認（第 2 根收在帶狀${st.dir > 0 ? '上方' : '下方'}）\n上軌 ${fmt_(up)}／下軌 ${fmt_(lo)}`, st.dir > 0 ? 'red_circle' : 'green_circle', 5);
       } else if (!first && NOTIFY_WARN && st.pend && st.cnt === 1) {
         notify_(`預警｜帶狀可能翻${st.pend > 0 ? '多' : '空'}`, `${timeTxt} 第 1 根收在帶狀${st.pend > 0 ? '上方' : '下方'}，再 1 根就翻向\n微台 ${fmt_(b.c)}`, 'warning', 3);
       }
