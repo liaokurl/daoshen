@@ -200,3 +200,11 @@ details.card > .inner { padding: 0 16px 16px; }
 .pos .k { font-size: 22px; font-weight: 800; }
 .pos .v { font-size: 30px; font-weight: 900; letter-spacing: .5px; }
 .pos .pl { flex-basis: 100%; font-size: 14px; font-weight: 600; opacity: .95; }
+
+.mv { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 14px; margin-bottom: 8px; border: 1px dashed var(--line); border-radius: 14px; background: var(--card, var(--bg)); }
+.mv.off b { color: var(--muted); text-decoration: line-through; }
+.mv span { display: flex; gap: 6px; flex-shrink: 0; }
+.mv button { min-width: 40px; padding: 6px 10px; font-size: 16px; }
+.mv button:disabled { opacity: .3; }
+.layout-bar { display: flex; gap: 8px; justify-content: center; margin: 14px 0 6px; }
+.layout-tip { margin: 0 4px 10px; }

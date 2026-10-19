@@ -15,7 +15,7 @@ import { sixLevels, periodRange, SIX_RATIOS, SIX_PERIODS } from "./engine/sixlay
 const VERSION = "車干製V1.5";
 const $app = document.getElementById("app");
 const MANUAL_KEY = "daoshen-manual-price";
-const state = { base: null, cfg: null, liveInfo: null, loading: false, bundle: null, manual: null, error: null, tab: readTab(), signals: null };
+const state = { base: null, cfg: null, liveInfo: null, loading: false, bundle: null, manual: null, error: null, tab: readTab(), signals: null, editLayout: null };
 const TABS = [["dao", "刀神"], ["kui", "葵哥"], ["plan", "計畫"], ["more", "資料"]];
 function readTab() { try { return localStorage.getItem("daoshen-tab") || "dao"; } catch { return "dao"; } }
 
@@ -129,12 +129,13 @@ function render() {
     return;
   }
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
-  const body = {
-    dao: [zsCard(c), myCard(c), ceCard(c), sixMini(c), swordCard(c), signalsCard(c), structureCard(c), chartCard(c)],
-    kui: [sixCard(c), kuigeCard(c)],
-    plan: [planCard(c), reviewCard(c)],
-    more: [extCard(c), statsCard(c), statusCard(c)],
+  const defs = {
+    dao: [["zs", "傑哥戰神帶狀", zsCard], ["my", "我的指標（狙擊）", myCard], ["ce", "多空主開關", ceCard], ["six", "六層第 5 層", sixMini], ["sword", "三刀流", swordCard], ["sig", "TradingView 快訊", signalsCard], ["struct", "均線結構", structureCard], ["chart", "走勢圖", chartCard]],
+    kui: [["six", "六層多空點位", sixCard], ["kuige", "葵哥三等分", kuigeCard]],
+    plan: [["plan", "盤前計畫", planCard], ["review", "檢討", reviewCard]],
+    more: [["ext", "外部資料", extCard], ["stats", "回測統計", statsCard], ["status", "資料狀態", statusCard]],
   }[state.tab] ?? [];
+  const body = layoutCards(state.tab, defs, c);
   const focusId = document.activeElement?.id, caret = document.activeElement?.selectionStart;
   $app.innerHTML = [
     state.error ? `<section class="card error">${esc(state.error)}</section>` : "",
@@ -144,8 +145,72 @@ function render() {
   ].join("");
   bind();
   bindSix();
+  bindLayout();
   // 自動更新時保留輸入框的游標，不打斷正在輸入的數字
   if (focusId) { const el = document.getElementById(focusId); if (el && el.tagName === "INPUT") { el.focus(); try { el.setSelectionRange(caret, caret); } catch { /* 忽略 */ } } }
+}
+
+// ---------- 卡片排序／隱藏（每個分頁各自記在這台裝置） ----------
+const LAYOUT_KEY = "daoshen-layout";
+function loadLayout() { try { return JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "{}") || {}; } catch { return {}; } }
+function saveLayout(v) { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(v)); } catch { /* 私密模式 */ } }
+function orderOf(tab, defs) {
+  const L = loadLayout()[tab] ?? {};
+  const ids = defs.map(d => d[0]);
+  const order = [...(L.order ?? []).filter(id => ids.includes(id)), ...ids.filter(id => !(L.order ?? []).includes(id))];
+  return { order, hidden: new Set((L.hidden ?? []).filter(id => ids.includes(id))) };
+}
+function layoutCards(tab, defs, c) {
+  const { order, hidden } = orderOf(tab, defs);
+  const byId = Object.fromEntries(defs.map(d => [d[0], d]));
+  const edit = state.editLayout === tab;
+  const out = [];
+  order.forEach((id, i) => {
+    const [, name, fn] = byId[id];
+    if (edit) {
+      const off = hidden.has(id);
+      out.push(`<div class="mv${off ? " off" : ""}"><b>${esc(name)}</b><span>
+        <button class="ghost" data-mv="${id}" data-dir="top" ${i === 0 ? "disabled" : ""} aria-label="移到最上面">⤒</button>
+        <button class="ghost" data-mv="${id}" data-dir="up" ${i === 0 ? "disabled" : ""} aria-label="上移">↑</button>
+        <button class="ghost" data-mv="${id}" data-dir="down" ${i === order.length - 1 ? "disabled" : ""} aria-label="下移">↓</button>
+        <button class="ghost" data-mv="${id}" data-dir="hide">${off ? "顯示" : "隱藏"}</button></span></div>`);
+      return;
+    }
+    if (hidden.has(id)) return;
+    let html = "";
+    try { html = fn(c); } catch (e) { console.error(e); html = `<section class="card error">${esc(name)} 計算失敗：${esc(e.message)}</section>`; }
+    out.push(html);
+  });
+  out.push(`<div class="layout-bar">${edit
+    ? `<button class="primary" data-layout="done">完成</button><button class="ghost" data-layout="reset">恢復預設順序</button>`
+    : `<button class="ghost" data-layout="edit">⇅ 調整卡片順序</button>`}</div>`);
+  if (edit) out.unshift(`<p class="note layout-tip">用 ⤒ ↑ ↓ 調整順序，「隱藏」可以收起不常看的卡片。調好按「完成」，會記在這台裝置。</p>`);
+  return out;
+}
+function bindLayout() {
+  document.querySelectorAll("[data-layout]").forEach(b => b.addEventListener("click", () => {
+    const act = b.dataset.layout;
+    if (act === "edit") state.editLayout = state.tab;
+    else if (act === "done") state.editLayout = null;
+    else if (act === "reset") { const all = loadLayout(); delete all[state.tab]; saveLayout(all); }
+    render();
+    if (act === "edit") window.scrollTo({ top: 0 });
+  }));
+  document.querySelectorAll("[data-mv]").forEach(b => b.addEventListener("click", () => {
+    const all = loadLayout(), tab = state.tab;
+    const ids = [...document.querySelectorAll(".mv [data-dir=top]")].map(x => x.dataset.mv);
+    const cur = all[tab] ?? {};
+    const order = ids.length ? ids : (cur.order ?? []);
+    const hidden = new Set(cur.hidden ?? []);
+    const id = b.dataset.mv, i = order.indexOf(id), dir = b.dataset.dir;
+    if (dir === "up" && i > 0) [order[i - 1], order[i]] = [order[i], order[i - 1]];
+    if (dir === "down" && i < order.length - 1) [order[i + 1], order[i]] = [order[i], order[i + 1]];
+    if (dir === "top" && i > 0) { order.splice(i, 1); order.unshift(id); }
+    if (dir === "hide") hidden.has(id) ? hidden.delete(id) : hidden.add(id);
+    all[tab] = { order, hidden: [...hidden] };
+    saveLayout(all);
+    render();
+  }));
 }
 
 function sessionLabel(s) {
