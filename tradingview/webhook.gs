@@ -157,10 +157,12 @@ function notify_(title, message, tag, priority) {
     } catch (err) { console.warn('寄信失敗：' + err); }
   }
   if (!NTFY_TOPIC || NTFY_TOPIC.indexOf('請換成') === 0) return;
-  UrlFetchApp.fetch('https://ntfy.sh', {
-    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-    payload: JSON.stringify({ topic: NTFY_TOPIC, title: title, message: message, tags: [tag], priority: priority, click: APP_URL }),
-  });
+  try {
+    UrlFetchApp.fetch('https://ntfy.sh', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ topic: NTFY_TOPIC, title: title, message: message, tags: [tag], priority: priority, click: APP_URL }),
+    });
+  } catch (err) { console.warn('ntfy 推播失敗：' + err); }
 }
 
 // ================= 多空主開關：60 分K 吊燈出場 Chandelier Exit(22,3) =================
@@ -295,4 +297,10 @@ function testCe() {
   const st = JSON.parse(PropertiesService.getScriptProperties().getProperty('ce') || '{}');
   const e = st.bars ? chandelier_(st.bars) : null;
   Logger.log(ok ? `主開關：${e.dir > 0 ? '多' : '空'}｜多方防守線 ${fmt_(e.longStop)}／空方防守線 ${fmt_(e.shortStop)}｜最後一根 ${Utilities.formatDate(new Date(st.lastT), 'Asia/Taipei', 'MM/dd HH:mm')} 收 ${fmt_(st.bars[st.bars.length - 1].c)}` : '讀不到 App 資料');
+}
+
+/** 第一次用 Gmail 通知：執行這個，會跳出授權（要勾選「傳送電子郵件」），然後寄一封測試信 */
+function setupEmail() {
+  Logger.log('今天還能寄 ' + MailApp.getRemainingDailyQuota() + ' 封');
+  MailApp.sendEmail({ to: NOTIFY_EMAIL, subject: '【刀神×葵哥】Gmail 通知已開啟', body: '之後多空主開關轉向、戰神帶狀翻向都會寄到這裡。\n\n打開 App：' + APP_URL, name: '刀神×葵哥' });
 }
