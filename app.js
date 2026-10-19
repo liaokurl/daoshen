@@ -130,10 +130,11 @@ function render() {
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
   const body = {
     dao: [ceCard(c), swordCard(c), zsCard(c), myCard(c), signalsCard(c), structureCard(c), chartCard(c)],
-    kui: [kuigeCard(c)],
+    kui: [sixCard(c), kuigeCard(c)],
     plan: [planCard(c), reviewCard(c)],
     more: [extCard(c), statsCard(c), statusCard(c)],
   }[state.tab] ?? [];
+  const focusId = document.activeElement?.id, caret = document.activeElement?.selectionStart;
   $app.innerHTML = [
     state.error ? `<section class="card error">${esc(state.error)}</section>` : "",
     quoteCard(c),
@@ -141,6 +142,9 @@ function render() {
     ...body,
   ].join("");
   bind();
+  bindSix(c);
+  // 自動更新時保留輸入框的游標，不打斷正在輸入的數字
+  if (focusId) { const el = document.getElementById(focusId); if (el && el.tagName === "INPUT") { el.focus(); try { el.setSelectionRange(caret, caret); } catch { /* 忽略 */ } } }
 }
 
 function sessionLabel(s) {
@@ -440,6 +444,101 @@ function kuigeCard(c) {
     ${cur}
     <p class="note">只保留葵哥最原始的「前盤高低三等分」，不再疊 Pivot、CDP、Fib。每條線的成績單同樣跟隨機線比較。</p>
   </section>`;
+}
+
+// ---------- 六層多空點位計算器 ----------
+const SIX_KEY = "daoshen-six";
+const SIX_RATIOS = [0.382, 0.618, 0.786, 1, 1.272, 1.618];
+const SIX_MODES = [["D", "日盤"], ["N", "夜盤"], ["W", "本週"], ["PW", "上週"]];
+function loadSix() { try { return JSON.parse(localStorage.getItem(SIX_KEY) ?? "null"); } catch { return null; } }
+function saveSix(v) { try { localStorage.setItem(SIX_KEY, JSON.stringify(v)); } catch { /* 私密模式 */ } }
+function weekStart(td) { // 該交易日所在週的週一（YYYYMMDD）
+  const d = new Date(Date.UTC(+td.slice(0, 4), +td.slice(4, 6) - 1, +td.slice(6, 8)));
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10).replaceAll("-", "");
+}
+/** 依模式從各盤高低算出區間：日盤／夜盤＝最近一盤（盤中就是當盤到目前為止），本週／上週＝週一到週五日夜盤合併 */
+function sixRange(c, mode) {
+  const S = (c.B.summaries ?? []).filter(s => s.h != null && s.l != null);
+  if (!S.length) return null;
+  const md = t => `${+t.slice(4, 6)}/${+t.slice(6, 8)}`;
+  if (mode === "D" || mode === "N") {
+    const s = S.filter(x => x.type === mode).at(-1);
+    if (!s) return null;
+    return { hi: Math.round(s.h), lo: Math.round(s.l), label: `${md(s.td)} ${mode === "D" ? "日盤" : "夜盤"}${s.complete === false ? "（進行中，到目前為止）" : ""}` };
+  }
+  const lastTd = S.at(-1).td, thisWeek = weekStart(lastTd);
+  const prevWeek = weekStart(S.filter(x => weekStart(x.td) < thisWeek).at(-1)?.td ?? "00000101");
+  const wk = mode === "W" ? thisWeek : prevWeek;
+  const rows = S.filter(x => weekStart(x.td) === wk);
+  if (!rows.length) return null;
+  return { hi: Math.round(Math.max(...rows.map(x => x.h))), lo: Math.round(Math.min(...rows.map(x => x.l))), label: `${mode === "W" ? "本週" : "上週"}（${md(rows[0].td)}～${md(rows.at(-1).td)}，日夜盤合併）` };
+}
+function sixDefaults(c) {
+  const saved = loadSix() ?? { mode: "D" };
+  if (saved.mode && saved.mode !== "custom") {
+    const r = sixRange(c, saved.mode);
+    if (r) return { ...r, mode: saved.mode };
+  }
+  if (saved.hi && saved.lo) return { hi: saved.hi, lo: saved.lo, mode: "custom", label: "自己輸入" };
+  return { hi: "", lo: "", mode: "custom", label: "自己輸入" };
+}
+function sixResult(hi, lo, price) {
+  if (!(hi > 0 && lo > 0) || hi <= lo) return `<p class="note">請輸入上方壓力（較大）與下方支撐（較小）。</p>`;
+  const mid = (hi + lo) / 2, d = hi - mid;
+  const lv = [
+    ...SIX_RATIOS.map((r, i) => ({ p: mid + d * r, name: `多方第 ${i + 1} 層`, r, side: 1 })),
+    { p: mid, name: "多空中軸", r: 0, side: 0 },
+    ...SIX_RATIOS.map((r, i) => ({ p: mid - d * r, name: `空方第 ${i + 1} 層`, r, side: -1 })),
+  ].sort((a, b) => b.p - a.p);
+  const rows = [];
+  let marked = price == null;
+  for (const l of lv) {
+    if (!marked && price > l.p) { rows.push(nowMarker(price)); marked = true; }
+    const cls = l.side > 0 ? "t-up" : l.side < 0 ? "t-down" : "";
+    rows.push(`<div class="lvl ${l.p > (price ?? 0) ? "res" : "sup"} kg"><span class="p ${cls}">${fmt(l.p)}</span><span class="role">${esc(l.name)}${l.r ? ` ×${l.r.toFixed(3)}` : ""}</span>${price != null ? `<span class="dist">距現價 ${signed(l.p - price)} 點｜每口 ${money(l.p - price)}</span>` : ""}</div>`);
+  }
+  if (!marked) rows.push(nowMarker(price));
+  let where = "";
+  if (price != null) {
+    const above = lv.filter(l => l.p > price).at(-1), below = lv.find(l => l.p <= price);
+    where = `<p class="expect">現價 <b>${fmt(price)}</b> ${price >= mid ? `在中軸<b class="t-up">上方</b>（偏多）` : `在中軸<b class="t-down">下方</b>（偏空）`}；上面最近 <b>${above ? `${esc(above.name)} ${fmt(above.p)}` : "—"}</b>，下面最近 <b>${below ? `${esc(below.name)} ${fmt(below.p)}` : "—"}</b>。</p>`;
+  }
+  return `<p class="expect">多空中軸 <b>${fmt(mid)}</b>｜壓力→中軸 ${fmt(d)} 點｜中軸→支撐 ${fmt(d)} 點｜完整區間 ${fmt(hi - lo)} 點</p>${where}<div class="ladder">${rows.join("")}</div>`;
+}
+function sixCard(c) {
+  const v = sixDefaults(c);
+  const btns = SIX_MODES.map(([m, label]) => `<button type="button" class="${v.mode === m ? "primary" : "ghost"}" data-six="${m}">${label}</button>`).join("");
+  return `<section class="card" id="six-card">
+    <h2>六層多空點位計算器</h2>
+    <div class="manual">${btns}</div>
+    <form class="manual" id="six-form">
+      <label class="note">上方壓力 <input id="six-hi" inputmode="numeric" pattern="[0-9]*" value="${v.hi}"></label>
+      <label class="note">下方支撐 <input id="six-lo" inputmode="numeric" pattern="[0-9]*" value="${v.lo}"></label>
+    </form>
+    <p class="note" id="six-src">區間來源：${esc(v.label)}${v.mode !== "custom" ? "（自動帶入最高／最低，可以自己改）" : ""}</p>
+    <div id="six-out">${sixResult(Number(v.hi), Number(v.lo), c.price)}</div>
+    <p class="note">多空中軸＝（壓力＋支撐）÷2；多方＝中軸＋距離×倍率，空方＝中軸−距離×倍率；倍率 0.382／0.618／0.786／1／1.272／1.618。高低用台指期近月計算（微台同價），點位四捨五入，僅供區間規劃參考，沒有回測驗證。</p>
+  </section>`;
+}
+function bindSix(c) {
+  const hiEl = document.getElementById("six-hi"), loEl = document.getElementById("six-lo"), out = document.getElementById("six-out"), src = document.getElementById("six-src");
+  if (!hiEl || !loEl || !out) return;
+  const num = el => Number(String(el.value).replace(/[^\d.]/g, ""));
+  const update = () => {
+    const hi = num(hiEl), lo = num(loEl);
+    out.innerHTML = sixResult(hi, lo, c.price);
+    if (hi > 0 && lo > 0) saveSix({ mode: "custom", hi, lo });
+    document.querySelectorAll("[data-six]").forEach(b => { b.className = "ghost"; });
+    if (src) src.textContent = "區間來源：自己輸入";
+  };
+  hiEl.addEventListener("input", update);
+  loEl.addEventListener("input", update);
+  document.getElementById("six-form").addEventListener("submit", e => e.preventDefault());
+  document.querySelectorAll("[data-six]").forEach(b => b.addEventListener("click", () => {
+    saveSix({ mode: b.dataset.six });
+    render();
+  }));
 }
 
 // ---------- 我的 TradingView 指標（App 內重算） ----------
