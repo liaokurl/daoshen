@@ -225,8 +225,9 @@ export function zhanshenBand(bars, { upLen = 24, midLen = 20, loLen = 24, confir
   for (let i = 0; i < bars.length; i += 1) {
     if (up[i] == null) continue;
     const raw = C[i] > up[i] ? 1 : C[i] < lo[i] ? -1 : 0;
-    if (raw !== 0 && raw !== dir) { cnt = raw === pend ? cnt + 1 : 1; pend = raw; }
-    else { pend = 0; cnt = 0; }
+    // 收在對側就累計；收回原方向那一側才歸零；留在帶狀裡面不歸零（照實測最吻合傑哥的規則）
+    if (raw !== 0 && raw !== dir) { pend = raw; cnt += 1; }
+    else if (raw !== 0 && raw === dir) { pend = 0; cnt = 0; }
     if (pend && cnt >= confirm) {
       if (dir !== 0) flips.push({ t: bars[i].end, side: pend, price: C[i] });
       dir = pend; since = bars[i].end; flipPrice = C[i]; pend = 0; cnt = 0;
