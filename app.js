@@ -10,6 +10,7 @@ import { kuigeModel } from "./engine/kuige.js";
 import { loadSignals } from "./signals.js";
 import { fetchLive, applyLive } from "./live.js";
 import { proSniper, washout, zhanshenBand, chandelierExit } from "./engine/myind.js";
+import { sixLevels, periodRange, SIX_RATIOS, SIX_PERIODS } from "./engine/sixlayer.js";
 
 const VERSION = "車干製V1.5";
 const $app = document.getElementById("app");
@@ -129,7 +130,7 @@ function render() {
   }
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
   const body = {
-    dao: [ceCard(c), swordCard(c), zsCard(c), myCard(c), signalsCard(c), structureCard(c), chartCard(c)],
+    dao: [ceCard(c), sixMini(c), swordCard(c), zsCard(c), myCard(c), signalsCard(c), structureCard(c), chartCard(c)],
     kui: [sixCard(c), kuigeCard(c)],
     plan: [planCard(c), reviewCard(c)],
     more: [extCard(c), statsCard(c), statusCard(c)],
@@ -142,7 +143,7 @@ function render() {
     ...body,
   ].join("");
   bind();
-  bindSix(c);
+  bindSix();
   // 自動更新時保留輸入框的游標，不打斷正在輸入的數字
   if (focusId) { const el = document.getElementById(focusId); if (el && el.tagName === "INPUT") { el.focus(); try { el.setSelectionRange(caret, caret); } catch { /* 忽略 */ } } }
 }
@@ -446,50 +447,26 @@ function kuigeCard(c) {
   </section>`;
 }
 
-// ---------- 六層多空點位計算器 ----------
-const SIX_KEY = "daoshen-six";
-const SIX_RATIOS = [0.382, 0.618, 0.786, 1, 1.272, 1.618];
-const SIX_MODES = [["D", "日盤"], ["N", "夜盤"], ["W", "本週"], ["PW", "上週"]];
-function loadSix() { try { return JSON.parse(localStorage.getItem(SIX_KEY) ?? "null"); } catch { return null; } }
-function saveSix(v) { try { localStorage.setItem(SIX_KEY, JSON.stringify(v)); } catch { /* 私密模式 */ } }
-function weekStart(td) { // 該交易日所在週的週一（YYYYMMDD）
-  const d = new Date(Date.UTC(+td.slice(0, 4), +td.slice(4, 6) - 1, +td.slice(6, 8)));
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-  return d.toISOString().slice(0, 10).replaceAll("-", "");
+// ---------- 六層多空點位（日／週／月，自動） ----------
+const SIX_KEY = "daoshen-six-mode";
+function sixMode() { try { const m = localStorage.getItem(SIX_KEY); return ["D", "W", "M"].includes(m) ? m : "D"; } catch { return "D"; } }
+const SIX_NAME = { D: "日", W: "週", M: "月" };
+const md = t => `${+t.slice(4, 6)}/${+t.slice(6, 8)}`;
+function sixPeriod(c, mode) {
+  const r = periodRange(c.B.summaries, mode, c.price);
+  return r ? { ...r, L: sixLevels(r.hi, r.lo) } : null;
 }
-/** 依模式從各盤高低算出區間：日盤／夜盤＝最近一盤（盤中就是當盤到目前為止），本週／上週＝週一到週五日夜盤合併 */
-function sixRange(c, mode) {
-  const S = (c.B.summaries ?? []).filter(s => s.h != null && s.l != null);
-  if (!S.length) return null;
-  const md = t => `${+t.slice(4, 6)}/${+t.slice(6, 8)}`;
-  if (mode === "D" || mode === "N") {
-    const s = S.filter(x => x.type === mode).at(-1);
-    if (!s) return null;
-    return { hi: Math.round(s.h), lo: Math.round(s.l), label: `${md(s.td)} ${mode === "D" ? "日盤" : "夜盤"}${s.complete === false ? "（進行中，到目前為止）" : ""}` };
-  }
-  const lastTd = S.at(-1).td, thisWeek = weekStart(lastTd);
-  const prevWeek = weekStart(S.filter(x => weekStart(x.td) < thisWeek).at(-1)?.td ?? "00000101");
-  const wk = mode === "W" ? thisWeek : prevWeek;
-  const rows = S.filter(x => weekStart(x.td) === wk);
-  if (!rows.length) return null;
-  return { hi: Math.round(Math.max(...rows.map(x => x.h))), lo: Math.round(Math.min(...rows.map(x => x.l))), label: `${mode === "W" ? "本週" : "上週"}（${md(rows[0].td)}～${md(rows.at(-1).td)}，日夜盤合併）` };
+function sixSpan(r) {
+  const rule = { D: "前一晚夜盤＋當天日盤", W: "週三結算後起算", M: "月結算（第三個週三）後起算" }[r.mode];
+  return `${md(r.from)}${r.from !== r.to ? `～${md(r.to)}` : ""}（${rule}，${r.days} 個交易日${r.live ? "，含盤中" : ""}）`;
 }
-function sixDefaults(c) {
-  const saved = loadSix() ?? { mode: "D" };
-  if (saved.mode && saved.mode !== "custom") {
-    const r = sixRange(c, saved.mode);
-    if (r) return { ...r, mode: saved.mode };
-  }
-  if (saved.hi && saved.lo) return { hi: saved.hi, lo: saved.lo, mode: "custom", label: "自己輸入" };
-  return { hi: "", lo: "", mode: "custom", label: "自己輸入" };
-}
-function sixResult(hi, lo, price) {
-  if (!(hi > 0 && lo > 0) || hi <= lo) return `<p class="note">請輸入上方壓力（較大）與下方支撐（較小）。</p>`;
-  const mid = (hi + lo) / 2, d = hi - mid;
+function sixResult(r, price) {
+  const L = r?.L;
+  if (!L) return `<p class="note">資料不足，算不出區間。</p>`;
   const lv = [
-    ...SIX_RATIOS.map((r, i) => ({ p: mid + d * r, name: `多方第 ${i + 1} 層`, r, side: 1 })),
-    { p: mid, name: "多空中軸", r: 0, side: 0 },
-    ...SIX_RATIOS.map((r, i) => ({ p: mid - d * r, name: `空方第 ${i + 1} 層`, r, side: -1 })),
+    ...L.up.map((p, i) => ({ p, name: `多方第 ${i + 1} 層`, r: SIX_RATIOS[i], side: 1 })),
+    { p: L.mid, name: "多空中軸", r: 0, side: 0 },
+    ...L.dn.map((p, i) => ({ p, name: `空方第 ${i + 1} 層`, r: SIX_RATIOS[i], side: -1 })),
   ].sort((a, b) => b.p - a.p);
   const rows = [];
   let marked = price == null;
@@ -499,44 +476,37 @@ function sixResult(hi, lo, price) {
     rows.push(`<div class="lvl ${l.p > (price ?? 0) ? "res" : "sup"} kg"><span class="p ${cls}">${fmt(l.p)}</span><span class="role">${esc(l.name)}${l.r ? ` ×${l.r.toFixed(3)}` : ""}</span>${price != null ? `<span class="dist">距現價 ${signed(l.p - price)} 點｜每口 ${money(l.p - price)}</span>` : ""}</div>`);
   }
   if (!marked) rows.push(nowMarker(price));
-  let where = "";
-  if (price != null) {
-    const above = lv.filter(l => l.p > price).at(-1), below = lv.find(l => l.p <= price);
-    where = `<p class="expect">現價 <b>${fmt(price)}</b> ${price >= mid ? `在中軸<b class="t-up">上方</b>（偏多）` : `在中軸<b class="t-down">下方</b>（偏空）`}；上面最近 <b>${above ? `${esc(above.name)} ${fmt(above.p)}` : "—"}</b>，下面最近 <b>${below ? `${esc(below.name)} ${fmt(below.p)}` : "—"}</b>。</p>`;
-  }
-  return `<p class="expect">多空中軸 <b>${fmt(mid)}</b>｜壓力→中軸 ${fmt(d)} 點｜中軸→支撐 ${fmt(d)} 點｜完整區間 ${fmt(hi - lo)} 點</p>${where}<div class="ladder">${rows.join("")}</div>`;
+  return `<p class="expect">高 <b>${fmt(L.hi)}</b>／低 <b>${fmt(L.lo)}</b>｜多空中軸 <b>${fmt(L.mid)}</b>｜中軸到高低各 ${fmt(L.d)} 點${r.broke ? `｜<b>現價剛突破${price > L.mid ? "高點" : "低點"}，區間已自動放大</b>` : ""}</p>${price != null ? `<p class="expect">現價 <b>${fmt(price)}</b> 在中軸${price >= L.mid ? `<b class="t-up">上方（偏多）</b>` : `<b class="t-down">下方（偏空）</b>`}</p>` : ""}<div class="ladder">${rows.join("")}</div>`;
 }
 function sixCard(c) {
-  const v = sixDefaults(c);
-  const btns = SIX_MODES.map(([m, label]) => `<button type="button" class="${v.mode === m ? "primary" : "ghost"}" data-six="${m}">${label}</button>`).join("");
+  const mode = sixMode(), r = sixPeriod(c, mode);
+  const btns = SIX_PERIODS.map(([m, label]) => `<button type="button" class="${mode === m ? "primary" : "ghost"}" data-six="${m}">${label}</button>`).join("");
   return `<section class="card" id="six-card">
-    <h2>六層多空點位計算器</h2>
+    <h2>六層多空點位｜${SIX_NAME[mode]}</h2>
     <div class="manual">${btns}</div>
-    <form class="manual" id="six-form">
-      <label class="note">上方壓力 <input id="six-hi" inputmode="numeric" pattern="[0-9]*" value="${v.hi}"></label>
-      <label class="note">下方支撐 <input id="six-lo" inputmode="numeric" pattern="[0-9]*" value="${v.lo}"></label>
-    </form>
-    <p class="note" id="six-src">區間來源：${esc(v.label)}${v.mode !== "custom" ? "（自動帶入最高／最低，可以自己改）" : ""}</p>
-    <div id="six-out">${sixResult(Number(v.hi), Number(v.lo), c.price)}</div>
-    <p class="note">多空中軸＝（壓力＋支撐）÷2；多方＝中軸＋距離×倍率，空方＝中軸−距離×倍率；倍率 0.382／0.618／0.786／1／1.272／1.618。高低用台指期近月計算（微台同價），點位四捨五入，僅供區間規劃參考，沒有回測驗證。</p>
+    ${r ? `<p class="note">區間：${esc(sixSpan(r))}。高低自動取這段期間的最高／最低，現價突破就立刻跟著改。</p>` : ""}
+    ${sixResult(r, c.price)}
+    <p class="note">多空中軸＝（高＋低）÷2；多方＝中軸＋距離×倍率，空方＝中軸−距離×倍率；倍率 0.382／0.618／0.786／1／1.272／1.618。結算日照「週三」「第三個週三」計算，遇到休市順延的那次會差一天。高低用台指期近月（微台同價）。沒有回測驗證，當區間規劃參考。</p>
   </section>`;
 }
-function bindSix(c) {
-  const hiEl = document.getElementById("six-hi"), loEl = document.getElementById("six-lo"), out = document.getElementById("six-out"), src = document.getElementById("six-src");
-  if (!hiEl || !loEl || !out) return;
-  const num = el => Number(String(el.value).replace(/[^\d.]/g, ""));
-  const update = () => {
-    const hi = num(hiEl), lo = num(loEl);
-    out.innerHTML = sixResult(hi, lo, c.price);
-    if (hi > 0 && lo > 0) saveSix({ mode: "custom", hi, lo });
-    document.querySelectorAll("[data-six]").forEach(b => { b.className = "ghost"; });
-    if (src) src.textContent = "區間來源：自己輸入";
-  };
-  hiEl.addEventListener("input", update);
-  loEl.addEventListener("input", update);
-  document.getElementById("six-form").addEventListener("submit", e => e.preventDefault());
+/** 刀神首頁用：日／週／月 各自的中軸與上下第 5 層 */
+function sixMini(c) {
+  const rows = SIX_PERIODS.map(([m, label]) => ({ label, r: sixPeriod(c, m) })).filter(x => x.r?.L);
+  if (!rows.length) return "";
+  const px = c.price;
+  const pos = (L) => px == null ? "" : px > L.up[4] ? "已過多方第 5 層" : px < L.dn[4] ? "已破空方第 5 層" : px >= L.mid ? "中軸上方" : "中軸下方";
+  return `<section class="card">
+    <h2>六層點位｜第 5 層（×1.272）</h2>
+    <div class="six-mini">
+      <div class="h"><span></span><span class="t-up">多 5</span><span>中軸</span><span class="t-down">空 5</span></div>
+      ${rows.map(({ label, r }) => `<div class="row"><span><b>${label}</b><small>${esc(pos(r.L))}</small></span><b class="t-up">${fmt(r.L.up[4])}</b><b>${fmt(r.L.mid)}</b><b class="t-down">${fmt(r.L.dn[4])}</b></div>`).join("")}
+    </div>
+    <p class="note">日＝一個交易日（夜盤＋日盤）；週＝週三結算後起算；月＝第三個週三結算後起算。高低被突破會立刻重算。完整 13 個點位在「葵哥」分頁。方向看上面的主開關與三刀流，這裡只看點位。</p>
+  </section>`;
+}
+function bindSix() {
   document.querySelectorAll("[data-six]").forEach(b => b.addEventListener("click", () => {
-    saveSix({ mode: b.dataset.six });
+    try { localStorage.setItem(SIX_KEY, b.dataset.six); } catch { /* 忽略 */ }
     render();
   }));
 }
