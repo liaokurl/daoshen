@@ -146,6 +146,7 @@ function render() {
   bind();
   bindSix();
   bindLayout();
+  document.getElementById("more-flips")?.addEventListener("toggle", e => { state.flipsOpen = e.target.open; e.target.querySelector("summary").textContent = e.target.open ? "收起" : `顯示其他 ${e.target.querySelectorAll(".fr").length} 筆`; });
   // 自動更新時保留輸入框的游標，不打斷正在輸入的數字
   if (focusId) { const el = document.getElementById(focusId); if (el && el.tagName === "INPUT") { el.focus(); try { el.setSelectionRange(caret, caret); } catch { /* 忽略 */ } } }
 }
@@ -640,9 +641,11 @@ function flipTable(flips, px) {
   const closed = rows.filter(r => !r.open && r.pnl != null);
   const tot = closed.reduce((a, r) => a + r.pnl, 0), win = closed.filter(r => r.pnl > 0).length;
   const tone = v => (v > 0 ? "t-up" : v < 0 ? "t-down" : "");
-  const shown = rows.slice(-10).reverse();
+  const all = rows.slice().reverse(), first = all.slice(0, 5), rest = all.slice(5);
+  const row = r => `<div class="fr${r.open ? " open" : ""}"><span>${fmtDateTime(r.t)}</span><span class="${r.side > 0 ? "t-up" : "t-down"}">${r.side > 0 ? "翻多" : "翻空"} ${fmt(r.price)}</span><b class="${tone(r.pnl)}">${r.pnl == null ? "—" : `${signed(r.pnl)} 點`}${r.open ? "<small>持有中</small>" : ""}</b></div>`;
   return `<div class="flips">
-    ${shown.map(r => `<div class="fr${r.open ? " open" : ""}"><span>${fmtDateTime(r.t)}</span><span class="${r.side > 0 ? "t-up" : "t-down"}">${r.side > 0 ? "翻多" : "翻空"} ${fmt(r.price)}</span><b class="${tone(r.pnl)}">${r.pnl == null ? "—" : `${signed(r.pnl)} 點`}${r.open ? "<small>持有中</small>" : ""}</b></div>`).join("")}
+    ${first.map(row).join("")}
+    ${rest.length ? `<details class="more-flips" id="more-flips"${state.flipsOpen ? " open" : ""}><summary>${state.flipsOpen ? "收起" : `顯示其他 ${rest.length} 筆`}</summary><div class="flips">${rest.map(row).join("")}</div></details>` : ""}
     ${closed.length ? `<div class="fr sum"><span>已結算 ${closed.length} 筆</span><span>勝率 ${Math.round(win / closed.length * 100)}%</span><b class="${tone(tot)}">${signed(tot)} 點</b></div>` : ""}
   </div>
   <p class="note">每筆＝在翻向價進場、下一次翻向價出場（反手），最上面一筆是目前持有中的浮動損益。統計範圍是 App 現有的近 12 個交易日 5 分K，沒扣手續費與滑價。</p>`;
