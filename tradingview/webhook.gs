@@ -62,6 +62,7 @@ function testChart() {
 const NTFY_TOPIC = '請換成你的推播主題';
 const APP_URL = 'https://liaokurl.github.io/daoshen/';
 const NOTIFY_WARN = false;   // true＝第 1 根收在另一側時也先預警
+const NOTIFY_EMAIL = '';      // 也寄 Gmail 的話填你的信箱（留空＝不寄）；Google 個人帳號每天最多寄 100 封
 
 function setupMonitor() {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'monitor').forEach(t => ScriptApp.deleteTrigger(t));
@@ -150,6 +151,11 @@ function wma_(arr, n) { let a = 0; for (let k = 0; k < n; k++) a += arr[arr.leng
 function fmt_(v) { return Math.round(v).toLocaleString('en-US'); }
 
 function notify_(title, message, tag, priority) {
+  if (NOTIFY_EMAIL) {
+    try {
+      MailApp.sendEmail({ to: NOTIFY_EMAIL, subject: '【刀神×葵哥】' + title, body: message + '\n\n打開 App：' + APP_URL, name: '刀神×葵哥' });
+    } catch (err) { console.warn('寄信失敗：' + err); }
+  }
   if (!NTFY_TOPIC || NTFY_TOPIC.indexOf('請換成') === 0) return;
   UrlFetchApp.fetch('https://ntfy.sh', {
     method: 'post', contentType: 'application/json', muteHttpExceptions: true,
