@@ -9,7 +9,7 @@ import { threeSwords, turtle, pcrView, swordSummary, SWORD_MODES } from "./engin
 import { kuigeModel } from "./engine/kuige.js";
 import { loadSignals } from "./signals.js";
 import { fetchLive, applyLive } from "./live.js";
-import { proSniper, washout, zhanshenBand } from "./engine/myind.js";
+import { proSniper, washout, zhanshenBand, chandelierExit } from "./engine/myind.js";
 
 const VERSION = "車干製V1.5";
 const $app = document.getElementById("app");
@@ -109,7 +109,7 @@ function compute() {
     const liveTmf = B.tmf5.find(s => s.complete === false);
     const asOf5 = liveTmf && B.tmfLive?.lastBarTime ? B.tmfLive.lastBarTime + 60_000 : (b5.at(-1)?.end ?? 0);
     const done5 = b5.filter(b => b.end <= asOf5);
-    if (done5.length > 100) my = { sn: proSniper(done5), wo: washout(done5), zs: zhanshenBand(done5), last: done5.at(-1), live: Boolean(liveTmf), src: B.tmf5.find(s => s.start + s.type === done5.at(-1).key)?.source };
+    if (done5.length > 100) my = { sn: proSniper(done5), wo: washout(done5), zs: zhanshenBand(done5), ce: chandelierExit(aggregate(done5, 60).filter(b => !b.partial)), last: done5.at(-1), live: Boolean(liveTmf), src: B.tmf5.find(s => s.start + s.type === done5.at(-1).key)?.source };
   }
   return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, chgLabel, dataAsOf, liveNow, R, now, sw, tt, summary, pcr, kg, my };
 }
@@ -129,7 +129,7 @@ function render() {
   }
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
   const body = {
-    dao: [swordCard(c), zsCard(c), myCard(c), signalsCard(c), structureCard(c), chartCard(c)],
+    dao: [ceCard(c), swordCard(c), zsCard(c), myCard(c), signalsCard(c), structureCard(c), chartCard(c)],
     kui: [kuigeCard(c)],
     plan: [planCard(c), reviewCard(c)],
     more: [extCard(c), statsCard(c), statusCard(c)],
@@ -470,6 +470,27 @@ function myCard(c) {
     <div class="review">${sigs}</div>
     ${bt}
     <p class="note">照你的 Pine 原始碼在 App 裡重算（預設參數、狙擊融合模式），洗盤指標的四條支撐壓力已和你的 TradingView 截圖逐一核對一致。</p>
+  </section>`;
+}
+
+// ---------- 主開關：60 分K 吊燈出場（多空轉換） ----------
+function ceCard(c) {
+  const e = c.my?.ce;
+  if (!e || e.longStop == null) return "";
+  const cls = e.dir > 0 ? "up" : "down";
+  const px = c.price ?? e.close;
+  const flip = e.dir > 0 ? e.longStop : e.shortStop;
+  const dist = e.dir > 0 ? px - flip : flip - px;
+  const say = e.dir > 0
+    ? `抱多／只找多。60 分K 收盤跌破 ${fmt(flip)} 才轉空（現價還差 ${fmt(dist)} 點）`
+    : `抱空／只找空。60 分K 收盤站上 ${fmt(flip)} 才轉多（現價還差 ${fmt(dist)} 點）`;
+  return `<section class="card sword ${cls}">
+    <h2>多空主開關（60 分K 吊燈）</h2>
+    <div class="verdict"><span class="side">${e.dir > 0 ? "多" : "空"}</span><span class="mode">${e.since ? `${fmtDateTime(e.since)} 轉${e.dir > 0 ? "多" : "空"}，轉向價 ${fmt(e.flipPrice)}` : ""}</span></div>
+    <p class="say">${esc(say)}</p>
+    ${dist < 0 ? `<p class="say">⚠ 現價已越過轉向線，等這根 60 分K 收盤確認</p>` : ""}
+    <p class="note">最近轉向：${e.flips.slice(-5).reverse().map(f => `${fmtDateTime(f.t)} ${f.side > 0 ? "轉多" : "轉空"} ${fmt(f.price)}`).join("；") || "—"}</p>
+    <p class="note">Chandelier Exit(22, 3)：近 22 根最高收盤 − 3×ATR 是多方防守線，近 22 根最低收盤 + 3×ATR 是空方防守線，只往有利方向移動。回測 9/2～10/17 微台（每筆扣 5 點、轉向就反手）：17 筆、勝率 41%、合計 +2,864 點、最大回落 −1,896；同樣規則用 5 分、15 分、30 分K 都比較差。樣本只有 6 週，當方向濾網用，不是聖杯。</p>
   </section>`;
 }
 

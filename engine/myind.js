@@ -2,7 +2,7 @@
 // 1.「微台 Pro Sniper 融合系統 v2.4.1」（預設參數、進場模式＝狙擊融合）
 // 2.「洗盤偵測支撐壓力」
 import { aggregate } from "./bars.js";
-import { ema, rma, sma, stdev, highest, lowest, sum, change, rsi, macd, dmi, supertrend, pivotHigh, pivotLow, crossover, crossunder } from "./pine.js";
+import { ema, rma, sma, stdev, highest, lowest, sum, change, rsi, macd, dmi, supertrend, atr, pivotHigh, pivotLow, crossover, crossunder } from "./pine.js";
 
 const nn = v => v != null && Number.isFinite(v);
 
@@ -235,4 +235,31 @@ export function zhanshenBand(bars, { upLen = 24, midLen = 20, loLen = 24, confir
   }
   const i = bars.length - 1;
   return { dir, since, flipPrice, pending: pend ? { side: pend, count: cnt, need: confirm } : null, up: up[i], mid: mid[i], lo: lo[i], close: C[i], flips: flips.slice(-8) };
+}
+
+/**
+ * 吊燈出場 Chandelier Exit（Alex Elder 提出；TradingView 熱門版本 by everget）
+ * 多方停損＝近 n 根最高收盤 − m×ATR；空方停損＝近 n 根最低收盤 + m×ATR（只往有利方向移動）
+ * 收盤突破空方停損＝翻多；跌破多方停損＝翻空。用 60 分K（回測時 5 分／15 分都被洗到虧）。
+ */
+export function chandelierExit(bars, { n = 22, m = 3 } = {}) {
+  const H = bars.map(b => b.h), L = bars.map(b => b.l), C = bars.map(b => b.c);
+  const a = atr(H, L, C, n), hh = highest(C, n), ll = lowest(C, n);
+  let dir = 0, ls = null, ss = null, since = null, flipPrice = null;
+  const flips = [];
+  for (let i = 0; i < C.length; i += 1) {
+    if (a[i] == null || hh[i] == null) continue;
+    let l = hh[i] - m * a[i], s = ll[i] + m * a[i];
+    const pl = ls ?? l, ps = ss ?? s;
+    if (i > 0 && C[i - 1] > pl) l = Math.max(l, pl);
+    if (i > 0 && C[i - 1] < ps) s = Math.min(s, ps);
+    const nd = C[i] > ps ? 1 : C[i] < pl ? -1 : dir || (C[i] >= (l + s) / 2 ? 1 : -1);
+    if (nd !== dir) {
+      if (dir !== 0) flips.push({ t: bars[i].end, side: nd, price: C[i] });
+      dir = nd; since = bars[i].end; flipPrice = C[i];
+    }
+    ls = l; ss = s;
+  }
+  const i = bars.length - 1;
+  return { dir, since, flipPrice, longStop: ls, shortStop: ss, close: C[i], lastEnd: bars[i]?.end, flips: flips.slice(-8), n, m };
 }
