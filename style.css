@@ -194,3 +194,9 @@ details.card > .inner { padding: 0 16px 16px; }
 .six-mini .row { padding: 10px 8px; border: 1px solid var(--line); border-radius: 12px; font-size: 17px; }
 .six-mini .row span:first-child { text-align: left; display: grid; }
 .six-mini small { font-size: 11px; color: var(--muted); font-weight: 400; }
+
+.pos { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 10px 0 12px; padding: 12px 14px; border-radius: 14px; color: #fff; font-variant-numeric: tabular-nums; }
+.pos.long { background: var(--up); } .pos.short { background: var(--down); }
+.pos .k { font-size: 22px; font-weight: 800; }
+.pos .v { font-size: 30px; font-weight: 900; letter-spacing: .5px; }
+.pos .pl { flex-basis: 100%; font-size: 14px; font-weight: 600; opacity: .95; }

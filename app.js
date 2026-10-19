@@ -130,7 +130,7 @@ function render() {
   }
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
   const body = {
-    dao: [ceCard(c), sixMini(c), swordCard(c), zsCard(c), myCard(c), signalsCard(c), structureCard(c), chartCard(c)],
+    dao: [zsCard(c), myCard(c), ceCard(c), sixMini(c), swordCard(c), signalsCard(c), structureCard(c), chartCard(c)],
     kui: [sixCard(c), kuigeCard(c)],
     plan: [planCard(c), reviewCard(c)],
     more: [extCard(c), statsCard(c), statusCard(c)],
@@ -523,7 +523,8 @@ function myCard(c) {
   const bt = S?.summary ? `<p class="note">回測（預設參數，${fmtYmd(new Date(S.from + 8 * 3600e3).toISOString().slice(0, 10).replaceAll("-", "")).slice(5)} 起 ${S.summary.n} 筆）：勝率 ${pct(S.summary.winRate)}，合計 ${signed(S.summary.total)} 點（每口 ${S.summary.total >= 0 ? "" : "−"}${money(S.summary.total)}），平均每筆 ${signed(S.summary.avg)} 點，最好 ${signed(S.summary.best)}／最差 ${signed(S.summary.worst)}。未扣手續費與滑價。</p>` : "";
   return `<section class="card sword ${posCls}">
     <h2>我的指標｜微台 PRO v2.4.1 × 洗盤偵測（5 分K）</h2>
-    <div class="verdict"><span class="side">${esc(d.action)}</span><span class="mode">${esc(d.position)}${d.entryPx ? `｜進場 ${fmt(d.entryPx)}` : ""}</span></div>
+    <div class="verdict"><span class="side">${esc(d.action)}</span><span class="mode">${d.entryPx ? "" : esc(d.position)}</span></div>
+    ${posBadge(d.position === "持有多單" ? 1 : d.position === "持有空單" ? -1 : 0, d.entryPx ?? null, c.price ?? my.last?.c)}
     <p class="note">最後一根：${fmtDateTime(my.last.end)}${my.src === "official" ? "（期交所微台逐筆）" : "（Yahoo 微型台指近一，官方資料出來後自動取代）"}</p>
     <div class="dash">
       ${cell("市場型態", d.market)}${cell("高週期方向", d.htf, toneOf(d.htf))}${cell("本週期結構", d.local, toneOf(d.local))}${cell("Sniper狀態", d.sniper, toneOf(d.sniper))}
@@ -563,6 +564,13 @@ function ceCard(c) {
   </section>`;
 }
 
+/** 持倉醒目標示：持有多單／空單＋進場點位＋目前損益 */
+function posBadge(side, entry, price) {
+  if (!side || entry == null) return "";
+  const pnl = price == null ? null : (price - entry) * side;
+  return `<div class="pos ${side > 0 ? "long" : "short"}"><span class="k">${side > 0 ? "持有多單" : "持有空單"}</span><span class="v">${fmt(entry)}</span>${pnl == null ? "" : `<span class="pl">${signed(pnl)} 點｜每口 ${pnl >= 0 ? "" : "−"}${money(Math.abs(pnl))}</span>`}</div>`;
+}
+
 // ---------- 傑哥戰神帶狀（近似） ----------
 function zsCard(c) {
   const z = c.my?.zs;
@@ -575,7 +583,8 @@ function zsCard(c) {
     : z.dir < 0 ? `2 根收盤站上上軌 ${fmt(z.up)} 才翻多（還差 ${fmt(z.up - px)} 點）` : z.dir > 0 ? `2 根收盤跌破下軌 ${fmt(z.lo)} 才翻空（還差 ${fmt(px - z.lo)} 點）` : "等收盤穿出任一邊";
   return `<section class="card sword ${cls}">
     <h2>傑哥戰神帶狀（5 分K，近似）</h2>
-    <div class="verdict"><span class="side">${z.dir > 0 ? "偏多" : z.dir < 0 ? "偏空" : "未定"}</span><span class="mode">${z.since ? `${fmtDateTime(z.since)} 翻向，翻向價 ${fmt(z.flipPrice)}` : ""}</span></div>
+    <div class="verdict"><span class="side">${z.dir > 0 ? "偏多" : z.dir < 0 ? "偏空" : "未定"}</span><span class="mode">${z.since ? `${fmtDateTime(z.since)} 翻向` : ""}</span></div>
+    ${posBadge(z.dir, z.flipPrice, px)}
     <div class="dash">
       <div><span>上軌</span><b>${fmt(z.up)}</b></div><div><span>中軌</span><b>${fmt(z.mid)}</b></div>
       <div><span>下軌</span><b>${fmt(z.lo)}</b></div><div><span>現價</span><b>${fmt(px)}｜${pos}</b></div>
