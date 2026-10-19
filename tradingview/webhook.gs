@@ -56,7 +56,7 @@ function testChart() {
   Logger.log(d.error || ('微台最新價 ' + d.quote.price + '，分K ' + d.timestamp.length + ' 根'));
 }
 
-// ================= 戰神帶狀翻向通知（ntfy 推播）=================
+// ================= 推播（ntfy）：戰神帶狀翻向＋多空主開關轉向 =================
 // 每分鐘檢查一次微台 5 分K；帶狀「2 根收在另一側」翻向時推播到手機。
 // 設定：把 NTFY_TOPIC 改成你訂閱的主題，然後在編輯器執行一次 setupMonitor。
 const NTFY_TOPIC = '請換成你的推播主題';
@@ -66,9 +66,13 @@ const NOTIFY_WARN = false;   // true＝第 1 根收在另一側時也先預警
 function setupMonitor() {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'monitor').forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('monitor').timeBased().everyMinutes(1).create();
-  PropertiesService.getScriptProperties().deleteProperty('zs');
+  const props = PropertiesService.getScriptProperties();
+  props.deleteProperty('zs');
+  props.deleteProperty('ce');
+  const seeded = ceSeed_();
   monitor();
-  notify_('刀神×葵哥 通知已開啟', '之後戰神帶狀翻多／翻空會推播到這裡。', 'white_check_mark', 3);
+  const st = JSON.parse(props.getProperty('ce') || '{}');
+  notify_('刀神×葵哥 通知已開啟', '之後「多空主開關（60 分K 吊燈）」轉多／轉空、戰神帶狀翻向都會推播到這裡。\n' + (seeded ? '主開關目前：' + (st.dir > 0 ? '多' : st.dir < 0 ? '空' : '未定') + '（已載入 ' + st.bars.length + ' 根 60 分K）' : '⚠ 讀不到 App 的歷史資料，主開關要等累積 36 根 60 分K 才會開始'), 'white_check_mark', 3);
 }
 
 function stopMonitor() {
@@ -136,6 +140,7 @@ function monitor() {
     }
     st.bars = bars.slice(-40);
     props.setProperty('zs', JSON.stringify(st));
+    ceUpdate_(d, props);
   } finally {
     lock.releaseLock();
   }
@@ -150,4 +155,138 @@ function notify_(title, message, tag, priority) {
     method: 'post', contentType: 'application/json', muteHttpExceptions: true,
     payload: JSON.stringify({ topic: NTFY_TOPIC, title: title, message: message, tags: [tag], priority: priority, click: APP_URL }),
   });
+}
+
+// ================= 多空主開關：60 分K 吊燈出場 Chandelier Exit(22,3) =================
+// 跟 App 刀神分頁最上面那張卡同一套規則；60 分K 收盤轉多／轉空時推播。
+// 歷史 60 分K 由 App 網站的資料（微台連續月、已做換月調整）載入，之後每分鐘用 Yahoo 分K 接上。
+const CE_N = 22, CE_M = 3, CE_KEEP = 120;
+const H = 3600000;
+
+/** 台北時間的交易時段起點（毫秒）；不在盤中回傳 null */
+function sessionStartOf_(ms) {
+  const t = new Date(ms + 8 * H), m = t.getUTCHours() * 60 + t.getUTCMinutes();
+  const day0 = Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()) - 8 * H;   // 台北當天 00:00
+  if (m >= 8 * 60 + 45 && m < 13 * 60 + 45) return day0 + (8 * 60 + 45) * 60000;
+  if (m >= 15 * 60) return day0 + 15 * H;
+  if (m < 5 * 60) return day0 - 9 * H;   // 前一天 15:00
+  return null;
+}
+/** 60 分K 的起點（每盤從開盤起算：日盤 08:45、09:45…；夜盤 15:00、16:00…） */
+function hourKey_(ms) { const s = sessionStartOf_(ms); return s == null ? null : s + Math.floor((ms - s) / H) * H; }
+/** Yahoo 把週五夜盤標成週日、週六凌晨標成週一：拉回 2 天 */
+function fixYahoo_(ms) {
+  const t = new Date(ms + 8 * H), wd = t.getUTCDay(), m = t.getUTCHours() * 60 + t.getUTCMinutes();
+  if ((wd === 0 && m >= 15 * 60) || (wd === 1 && m < 5 * 60 + 5)) return ms - 48 * H;
+  return ms;
+}
+
+/** 從 App 網站載入近 12 個交易日的微台 5 分K → 60 分K */
+function ceSeed_() {
+  const res = UrlFetchApp.fetch(APP_URL + 'data/bundle.json?t=' + Date.now(), { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) return false;
+  const B = JSON.parse(res.getContentText());
+  const bars = ceSeedBars_(B.tmf5 || []);
+  if (bars.length < CE_N + 5) return false;
+  const props = PropertiesService.getScriptProperties();
+  const st = { bars: bars.slice(-CE_KEEP), dir: 0, lastT: 0 };
+  const e = chandelier_(st.bars);
+  st.dir = e.dir; st.lastT = st.bars[st.bars.length - 1].t;
+  props.setProperty('ce', JSON.stringify(st));
+  return true;
+}
+
+/** tmf5 紀錄（每盤一筆，bars 為 5 分K 陣列，null＝沒成交）→ 60 分K；沒成交的格子沿用前收，跟 App 一樣 */
+function ceSeedBars_(recs) {
+  const out = [];
+  recs.filter(r => r.complete !== false).forEach(r => {
+    const y = +r.start.slice(0, 4), mo = +r.start.slice(4, 6) - 1, d = +r.start.slice(6, 8);
+    const base = Date.UTC(y, mo, d) - 8 * H + (r.type === 'D' ? (8 * 60 + 45) * 60000 : 15 * H);
+    const first = r.bars.find(b => b);
+    if (!first) return;
+    let last = first[0], cur = null;
+    r.bars.forEach((b, i) => {
+      const k = base + Math.floor(i / 12) * H;
+      const v = b || [last, last, last, last];
+      last = v[3];
+      if (!cur || cur.t !== k) { if (cur) out.push(cur); cur = { t: k, h: v[1], l: v[2], c: v[3] }; }
+      else { cur.h = Math.max(cur.h, v[1]); cur.l = Math.min(cur.l, v[2]); cur.c = v[3]; }
+    });
+    if (cur) out.push(cur);
+  });
+  return out.sort((a, b) => a.t - b.t);
+}
+
+/** Chandelier Exit：照 TradingView 版本（ATR 用 RMA、最高最低用收盤），回傳最後方向、防守線與轉向紀錄 */
+function chandelier_(bars) {
+  const n = CE_N, m = CE_M, C = bars.map(b => b.c);
+  let atr = null, trSum = 0, trCnt = 0, dir = 0, ls = null, ss = null;
+  const flips = [];
+  for (let i = 0; i < bars.length; i++) {
+    if (i > 0) {
+      const tr = Math.max(bars[i].h - bars[i].l, Math.abs(bars[i].h - C[i - 1]), Math.abs(bars[i].l - C[i - 1]));
+      if (atr == null) { trSum += tr; trCnt++; if (trCnt === n) atr = trSum / n; }
+      else atr = (tr + (n - 1) * atr) / n;
+    }
+    if (atr == null || i < n - 1) continue;
+    const win = C.slice(i - n + 1, i + 1);
+    let l = Math.max.apply(null, win) - m * atr, s = Math.min.apply(null, win) + m * atr;
+    const pl = ls == null ? l : ls, ps = ss == null ? s : ss;
+    if (C[i - 1] > pl) l = Math.max(l, pl);
+    if (C[i - 1] < ps) s = Math.min(s, ps);
+    const nd = C[i] > ps ? 1 : C[i] < pl ? -1 : (dir || (C[i] >= (l + s) / 2 ? 1 : -1));
+    if (nd !== dir) { if (dir !== 0) flips.push({ t: bars[i].t, side: nd, price: C[i] }); dir = nd; }
+    ls = l; ss = s;
+  }
+  return { dir: dir, longStop: ls, shortStop: ss, flips: flips };
+}
+
+/** 每分鐘：把 Yahoo 1 分K 併成已收完的 60 分K，算吊燈，轉向就推播 */
+function ceUpdate_(d, props) {
+  let st = JSON.parse(props.getProperty('ce') || 'null');
+  if (!st || !st.bars || st.bars.length < CE_N + 5) { if (!ceSeed_()) return; st = JSON.parse(props.getProperty('ce')); }
+  const ts = d.timestamp || [], q = d.indicators.quote[0];
+  const map = {};
+  let lastMin = 0;
+  for (let i = 0; i < ts.length; i++) {
+    const h = q.high[i], l = q.low[i], c = q.close[i];
+    if ([h, l, c].some(v => v == null)) continue;
+    const start = fixYahoo_(ts[i] * 1000 - 60000);
+    const k = hourKey_(start);
+    if (k == null) continue;
+    lastMin = Math.max(lastMin, start);
+    const b = map[k];
+    if (!b) map[k] = { t: k, h: h, l: l, c: c, first: start, last: start };
+    else { b.h = Math.max(b.h, h); b.l = Math.min(b.l, l); if (start >= b.last) { b.c = c; b.last = start; } b.first = Math.min(b.first, start); }
+  }
+  const byT = {};
+  st.bars.forEach(b => { byT[b.t] = b; });
+  let added = false;
+  Object.keys(map).map(k => map[k]).forEach(b => {
+    const end = b.t + H, sEnd = sessionStartOf_(b.t) + (new Date(b.t + 8 * H).getUTCHours() >= 15 || new Date(b.t + 8 * H).getUTCHours() < 5 ? 14 : 5) * H;
+    const done = Math.min(end, sEnd) <= lastMin + 60000;   // 這根 60 分K 已收完
+    const whole = b.first <= b.t + 5 * 60000;               // Yahoo 資料有涵蓋這根的開頭
+    if (done && whole && b.t > st.lastT) { byT[b.t] = { t: b.t, h: b.h, l: b.l, c: b.c }; added = true; }
+  });
+  if (!added) return;
+  const bars = Object.keys(byT).map(k => byT[k]).sort((a, b) => a.t - b.t).slice(-CE_KEEP);
+  const e = chandelier_(bars);
+  const last = bars[bars.length - 1];
+  if (st.dir !== 0 && e.dir !== st.dir) {
+    const timeTxt = Utilities.formatDate(new Date(last.t + H), 'Asia/Taipei', 'MM/dd HH:mm');
+    const line = e.dir > 0 ? e.longStop : e.shortStop;
+    notify_(`🔔 主開關轉${e.dir > 0 ? '多' : '空'}｜微台 ${fmt_(last.c)}`,
+      `${timeTxt} 60 分K 收盤${e.dir > 0 ? '站上空方防守線' : '跌破多方防守線'}\n之後只找${e.dir > 0 ? '多' : '空'}單；60 分K 收盤${e.dir > 0 ? '跌破' : '站上'} ${fmt_(line)} 才再轉向`,
+      e.dir > 0 ? 'red_circle' : 'green_circle', 5);
+  }
+  st.bars = bars; st.dir = e.dir; st.lastT = last.t;
+  props.setProperty('ce', JSON.stringify(st));
+}
+
+/** 在編輯器執行：看主開關目前狀態（不推播） */
+function testCe() {
+  const ok = ceSeed_();
+  const st = JSON.parse(PropertiesService.getScriptProperties().getProperty('ce') || '{}');
+  const e = st.bars ? chandelier_(st.bars) : null;
+  Logger.log(ok ? `主開關：${e.dir > 0 ? '多' : '空'}｜多方防守線 ${fmt_(e.longStop)}／空方防守線 ${fmt_(e.shortStop)}｜最後一根 ${Utilities.formatDate(new Date(st.lastT), 'Asia/Taipei', 'MM/dd HH:mm')} 收 ${fmt_(st.bars[st.bars.length - 1].c)}` : '讀不到 App 資料');
 }
