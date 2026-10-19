@@ -8,12 +8,13 @@ import { smaSeries } from "./engine/indicators.js";
 import { threeSwords, turtle, pcrView, swordSummary, SWORD_MODES } from "./engine/sword.js";
 import { kuigeModel } from "./engine/kuige.js";
 import { loadSignals } from "./signals.js";
+import { fetchLive, applyLive } from "./live.js";
 import { proSniper, washout } from "./engine/myind.js";
 
-const VERSION = "車干製V1.2";
+const VERSION = "車干製V1.3";
 const $app = document.getElementById("app");
 const MANUAL_KEY = "daoshen-manual-price";
-const state = { bundle: null, manual: null, error: null, tab: readTab(), signals: null };
+const state = { base: null, cfg: null, liveInfo: null, loading: false, bundle: null, manual: null, error: null, tab: readTab(), signals: null };
 const TABS = [["dao", "刀神"], ["kui", "葵哥"], ["plan", "計畫"], ["more", "資料"]];
 function readTab() { try { return localStorage.getItem("daoshen-tab") || "dao"; } catch { return "dao"; } }
 
@@ -22,6 +23,7 @@ const signed = v => (v == null || !Number.isFinite(v) ? "—" : `${v > 0 ? "+" :
 const money = pts => `NT$${Math.round(Math.abs(pts) * POINT_VALUE_TMF).toLocaleString("en-US")}`;
 const pct = v => (v == null ? "—" : `${Math.round(v * 100)}%`);
 const WD = "日一二三四五六";
+const fmtClock = ms => new Date(ms).toLocaleTimeString("zh-TW", { timeZone: "Asia/Taipei", hour12: false });
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
 function readManual() {
@@ -32,17 +34,32 @@ function saveManual(v) {
 }
 
 async function load() {
+  state.loading = true; render();
+  const cfgP = fetch(`config.json?t=${Date.now()}`, { cache: "no-store" }).then(r => (r.ok ? r.json() : {})).catch(() => ({}));
   try {
     const res = await fetch(`data/bundle.json?t=${Date.now()}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    state.bundle = await res.json();
+    state.base = await res.json();
     state.error = null;
   } catch (e) {
     state.error = `讀不到資料（${e.message}）。如果之前讀過，畫面保留上次的結果。`;
   }
+  state.cfg = await cfgP;
   state.manual = readManual();
+  await refreshLive(false);
+  state.loading = false;
   render();
   loadSignals().then(s => { state.signals = s; render(); });
+}
+
+/** 只抓即時行情（不重抓 bundle） */
+async function refreshLive(doRender = true) {
+  if (!state.base) return;
+  const L = await fetchLive(state.cfg ?? {});
+  state.liveInfo = L ? { kind: L.kind, at: Date.now(), ms: L.ms } : { kind: "fail", at: Date.now() };
+  // 每次都從伺服器的 bundle 複製一份再套即時資料，避免累積
+  state.bundle = applyLive(structuredClone(state.base), L);
+  if (doRender) render();
 }
 
 function compute() {
@@ -55,7 +72,7 @@ function compute() {
   const liveNow = now >= sessionStartMs(target.start, target.type) && now < sessionEndMs(target.start, target.type);
   // 資料時間：盤中以 Yahoo 最後一分鐘為準（分K以開始時間標記，所以 +1 分鐘才收完）
   let dataAsOf = bars15.length ? bars15.at(-1).end : now;
-  const liveSession = B.sessions15.find(s => s.source === "yahoo" && s.complete === false);
+  const liveSession = B.sessions15.find(s => String(s.source).startsWith("yahoo") && s.complete === false);
   if (liveSession && live?.lastBarTime) dataAsOf = Math.min(live.lastBarTime + 60_000, sessionEndMs(liveSession.start, liveSession.type));
   else if (bars15.length) dataAsOf = Math.max(...B.sessions15.filter(s => s.complete !== false).map(s => sessionEndMs(s.start, s.type)));
   const completeBars = bars15.filter(b => b.t < dataAsOf);
@@ -98,6 +115,8 @@ function compute() {
 }
 
 function render() {
+  const btn = document.getElementById("refresh");
+  if (btn) btn.textContent = state.loading ? "更新中…" : "↻ 更新";
   if (!state.bundle) {
     $app.innerHTML = `<section class="card ${state.error ? "error" : "loading"}">${esc(state.error ?? "讀取資料中…")}</section>`;
     return;
@@ -136,8 +155,12 @@ function quoteCard(c) {
   const src = manual
     ? `手動輸入 ${fmtTime(manual.at)}`
     : live?.lastPrice != null
-      ? `Yahoo 台指期近一 ${live.quotedAt ? fmtDateTime(live.quotedAt) : ""}（延遲報價）`
+      ? `${esc(live.source ?? "Yahoo 台指期近一")}｜報價時間 ${live.quotedAt ? fmtClock(live.quotedAt) : "—"}`
       : "最後一根已收 K 棒收盤";
+  const li = state.liveInfo;
+  const liveTxt = !li ? "" : li.kind === "bars" ? `即時行情已更新 ${fmtClock(li.at)}（含分K，${(li.ms / 1000).toFixed(1)} 秒）`
+    : li.kind === "price" ? `即時價已更新 ${fmtClock(li.at)}；分K仍是伺服器 ${fmtTime(B.builtAt)} 的資料（設定即時中繼站後就會即時）`
+    : `即時行情抓取失敗，顯示伺服器 ${fmtTime(B.builtAt)} 的資料`;
   const chips = [
     `<span class="chip">TX ${B.contract.slice(0, 4)}/${B.contract.slice(4)}（微台同價）</span>`,
     `<span class="chip ${liveNow ? "ok" : ""}">${liveNow ? "盤中" : "休市中"}｜${sessionLabel(B.target)}</span>`,
@@ -145,7 +168,8 @@ function quoteCard(c) {
   ].join("");
   return `<section class="card quote">
     <div class="quote-row"><span class="big">${fmt(price)}</span><span class="chg ${chg > 0 ? "up" : chg < 0 ? "down" : ""}">${signed(chg)}</span><span class="meta">${esc(chgLabel)}</span></div>
-    <div class="meta">${esc(src)}</div>
+    <div class="meta">${src}</div>
+    ${liveTxt ? `<div class="meta">${liveTxt}</div>` : ""}
     <div class="chips">${chips}</div>
     <form class="manual" id="manual">
       <input id="manual-input" inputmode="numeric" pattern="[0-9]*" placeholder="${fmt(autoPrice)}" aria-label="手動輸入現價" value="${manual ? Math.round(manual.price) : ""}">
@@ -490,6 +514,8 @@ function bind() {
 }
 
 document.getElementById("refresh").addEventListener("click", load);
+// 盤中每 60 秒自動抓一次即時行情；伺服器資料每 5 分鐘重抓
+setInterval(() => { if (!document.hidden && state.base) refreshLive(); }, 60_000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
 setInterval(() => { if (!document.hidden) load(); }, 5 * 60_000);
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

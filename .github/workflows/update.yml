@@ -1,8 +1,8 @@
 name: 更新資料並發布
 on:
   schedule:
-    # UTC 週一 00:00 ～ 週五 23:45 每 15 分鐘 = 台北 週一 08:00 ～ 週六 07:45（涵蓋週五夜盤）
-    - cron: "*/15 * * * 1-5"
+    # UTC 週一～週五 每 10 分鐘（避開整點，GitHub 整點最容易延遲） = 台北 週一 08:00 ～ 週六 07:45（涵蓋週五夜盤）
+    - cron: "3-59/10 * * * 1-5"
   push:
     branches: [main]
     paths-ignore: ["data/**", "README.md"]
@@ -54,7 +54,7 @@ jobs:
       - name: 組網站
         run: |
           mkdir -p _site/data
-          cp index.html app.js signals.js config.json style.css manifest.webmanifest sw.js icon.svg _site/
+          cp index.html app.js signals.js live.js config.json style.css manifest.webmanifest sw.js icon.svg _site/
           cp -r engine _site/
           cp data/bundle.json _site/data/
           cp data/last-run.json _site/data/ 2>/dev/null || true

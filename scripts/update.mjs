@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { fetchBuffer, taifexDailyZipUrl, fetchFutDataDown, fetchYahooChart, decodeBig5, fetchPcr, fetchFearGreed } from "./lib/sources.mjs";
 import { swordStudy } from "../engine/sword.js";
+import { yahooToRecords as yahooToRecordsShared } from "../engine/yahoo.js";
 import { parseDailyCsv, buildCalendar, expiryOverrides, contractDataset, bars15Of, tmfContinuous } from "./lib/dataset.mjs";
 import { buildBars15 } from "../engine/bars.js";
 import { proSniper, tradeSummary } from "../engine/myind.js";
@@ -134,44 +135,7 @@ function tpeMsOf(ymd, minute) {
 }
 
 // ---------- 3. Yahoo 盤中 ----------
-/** Yahoo 分K → 盤別紀錄（res 分鐘） */
-function yahooToRecords(json, res, calendar, source) {
-  const ts = json.timestamp ?? [];
-  const q = json.indicators?.quote?.[0] ?? {};
-  const recs = new Map();
-  let lastT = 0, lastPrice = null;
-  for (let i = 0; i < ts.length; i += 1) {
-    // Yahoo 分K時間是「該分鐘結束時間」，減 1 分鐘當開始時間
-    const t = ts[i] * 1000 - 60_000;
-    const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i], v = q.volume?.[i] ?? 0;
-    if (![o, h, l, c].every(Number.isFinite)) continue;
-    const parts = tpeParts(t);
-    const clock = `${String(Math.floor(parts.minute / 60)).padStart(2, "0")}${String(parts.minute % 60).padStart(2, "0")}00`;
-    const slot = classifyTick(parts.ymd, clock, res);
-    if (!slot) continue;
-    const key = sessionKey(slot.start, slot.type);
-    let rec = recs.get(key);
-    if (!rec) { rec = { start: slot.start, type: slot.type, source, res, bars: new Array(slotsOf(slot.type, res)).fill(null) }; recs.set(key, rec); }
-    const b = rec.bars[slot.slot];
-    if (!b) rec.bars[slot.slot] = [o, h, l, c, v];
-    else { b[1] = Math.max(b[1], h); b[2] = Math.min(b[2], l); b[3] = c; b[4] += v; }
-    if (t >= lastT) { lastT = t; lastPrice = c; }
-  }
-  // Yahoo 把夜盤時間搬到「交易日前一天 15:00」：週五夜盤會被標成週日晚上。搬回真正開盤日。
-  for (const [key, rec] of [...recs.entries()]) {
-    if (rec.type !== "N") continue;
-    const actual = prevTradingDate(addDays(rec.start, 1), calendar);
-    if (actual === rec.start) continue;
-    const shift = tpeMs(actual) - tpeMs(rec.start);
-    if (lastT >= sessionStartMs(rec.start, "N") && lastT < sessionEndMs(rec.start, "N")) lastT += shift;
-    recs.delete(key);
-    rec.yahooStart = rec.start;
-    rec.start = actual;
-    recs.set(sessionKey(actual, "N"), rec);
-  }
-  for (const rec of recs.values()) rec.complete = NOW >= sessionEndMs(rec.start, rec.type) + 2 * 60_000;
-  return { recs: [...recs.values()], lastT, lastPrice, points: ts.length };
-}
+function yahooToRecords(json, res, calendar, source) { return yahooToRecordsShared(json, res, calendar, source, NOW); }
 
 async function updateYahoo(frontFor, calendar) {
   if (OFFLINE) return null;
