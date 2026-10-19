@@ -16,6 +16,8 @@ function doPost(e) {
   if (!e || !e.parameter || e.parameter.key !== KEY) return ContentService.createTextOutput('forbidden');
   const body = e.postData ? e.postData.contents : '';
   sheet_().appendRow([new Date(), body]);
+  // TradingView 快訊（狙擊、傑哥…）也轉寄 Email；取樣器的資料不寄
+  if (body && body.indexOf('戰神通道') < 0) notify_('TradingView 快訊｜' + body.slice(0, 60), body, 'bell', 4);
   return ContentService.createTextOutput('ok');
 }
 
