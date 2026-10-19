@@ -216,17 +216,22 @@ function wmaArr(src, n) {
  * 上軌＝最高價 WMA24、中軌＝收盤 WMA20、下軌＝最低價 WMA24。
  * 方向：收盤穿出上軌→偏多、跌破下軌→偏空，沒穿出對側就維持原方向。
  */
-export function zhanshenBand(bars, { upLen = 24, midLen = 20, loLen = 24 } = {}) {
+export function zhanshenBand(bars, { upLen = 24, midLen = 20, loLen = 24, confirm = 2 } = {}) {
   const H = bars.map(b => b.h), L = bars.map(b => b.l), C = bars.map(b => b.c);
   const up = wmaArr(H, upLen), mid = wmaArr(C, midLen), lo = wmaArr(L, loLen);
-  let dir = 0, since = null, flipPrice = null;
+  // 收盤連續 confirm 根都收在帶狀另一側才翻向（實測跟傑哥 10/16、10/19 共 10 筆訊號的方向與筆數一致）
+  let dir = 0, since = null, flipPrice = null, pend = 0, cnt = 0;
   const flips = [];
   for (let i = 0; i < bars.length; i += 1) {
     if (up[i] == null) continue;
-    let nd = dir;
-    if (C[i] > up[i]) nd = 1; else if (C[i] < lo[i]) nd = -1;
-    if (nd !== dir) { if (dir !== 0) flips.push({ t: bars[i].end, side: nd, price: C[i] }); dir = nd; since = bars[i].end; flipPrice = C[i]; }
+    const raw = C[i] > up[i] ? 1 : C[i] < lo[i] ? -1 : 0;
+    if (raw !== 0 && raw !== dir) { cnt = raw === pend ? cnt + 1 : 1; pend = raw; }
+    else { pend = 0; cnt = 0; }
+    if (pend && cnt >= confirm) {
+      if (dir !== 0) flips.push({ t: bars[i].end, side: pend, price: C[i] });
+      dir = pend; since = bars[i].end; flipPrice = C[i]; pend = 0; cnt = 0;
+    }
   }
   const i = bars.length - 1;
-  return { dir, since, flipPrice, up: up[i], mid: mid[i], lo: lo[i], close: C[i], flips: flips.slice(-8) };
+  return { dir, since, flipPrice, pending: pend ? { side: pend, count: cnt, need: confirm } : null, up: up[i], mid: mid[i], lo: lo[i], close: C[i], flips: flips.slice(-8) };
 }

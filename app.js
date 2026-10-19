@@ -11,7 +11,7 @@ import { loadSignals } from "./signals.js";
 import { fetchLive, applyLive } from "./live.js";
 import { proSniper, washout, zhanshenBand } from "./engine/myind.js";
 
-const VERSION = "車干製V1.4";
+const VERSION = "車干製V1.5";
 const $app = document.getElementById("app");
 const MANUAL_KEY = "daoshen-manual-price";
 const state = { base: null, cfg: null, liveInfo: null, loading: false, bundle: null, manual: null, error: null, tab: readTab(), signals: null };
@@ -480,7 +480,9 @@ function zsCard(c) {
   const cls = z.dir > 0 ? "up" : z.dir < 0 ? "down" : "neutral";
   const px = c.price ?? z.close;
   const pos = px > z.up ? "在帶狀上方" : px < z.lo ? "在帶狀下方" : "在帶狀裡面";
-  const flipNeed = z.dir < 0 ? `收盤站上上軌 ${fmt(z.up)} 才翻多（還差 ${fmt(z.up - px)} 點）` : z.dir > 0 ? `收盤跌破下軌 ${fmt(z.lo)} 才翻空（還差 ${fmt(px - z.lo)} 點）` : "等收盤穿出任一邊";
+  const flipNeed = z.pending
+    ? `⚠ 已有 ${z.pending.count} 根收在帶狀${z.pending.side > 0 ? "上方" : "下方"}，再 ${z.pending.need - z.pending.count} 根就翻${z.pending.side > 0 ? "多" : "空"}`
+    : z.dir < 0 ? `連續 2 根收盤站上上軌 ${fmt(z.up)} 才翻多（還差 ${fmt(z.up - px)} 點）` : z.dir > 0 ? `連續 2 根收盤跌破下軌 ${fmt(z.lo)} 才翻空（還差 ${fmt(px - z.lo)} 點）` : "等收盤穿出任一邊";
   return `<section class="card sword ${cls}">
     <h2>傑哥戰神帶狀（5 分K，近似）</h2>
     <div class="verdict"><span class="side">${z.dir > 0 ? "偏多" : z.dir < 0 ? "偏空" : "未定"}</span><span class="mode">${z.since ? `${fmtDateTime(z.since)} 翻向，翻向價 ${fmt(z.flipPrice)}` : ""}</span></div>
@@ -490,7 +492,7 @@ function zsCard(c) {
     </div>
     <p class="say">${esc(flipNeed)}</p>
     <p class="note">最近翻向：${z.flips.slice(-5).reverse().map(f => `${fmtDateTime(f.t)} ${f.side > 0 ? "翻多" : "翻空"} ${fmt(f.price)}`).join("；") || "—"}</p>
-    <p class="note">用你截圖的數值反推的公式（最高價 WMA24／收盤 WMA20／最低價 WMA24），跟傑哥原版大約差 1～3 點。傑哥的多空訊號通常在帶狀翻向後 0～45 分鐘才出現，他另有一道確認條件。</p>
+    <p class="note">帶狀公式由你的截圖反推（最高價 WMA24／收盤 WMA20／最低價 WMA24），跟原版差約 1～3 點。翻向規則「連續 2 根 5 分K 收在帶外」：對照傑哥 10/16、10/19 共 10 筆訊號，方向與筆數全部一致，時間多數相同或差 1 根，少數晚 2～5 根。</p>
   </section>`;
 }
 
