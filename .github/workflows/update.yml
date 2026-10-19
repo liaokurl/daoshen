@@ -58,6 +58,10 @@ jobs:
           cp -r engine _site/
           cp data/bundle.json _site/data/
           cp data/last-run.json _site/data/ 2>/dev/null || true
+          # 每個 JS 檔的網址加上版本號，避免手機用到舊程式快取
+          V=${GITHUB_SHA::7}
+          sed -i -E "s#(from \"\.{1,2}/[^\"]+\.js)\"#\1?v=$V\"#g" _site/*.js _site/engine/*.js
+          sed -i -E "s#src=\"app\.js\"#src=\"app.js?v=$V\"#" _site/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
