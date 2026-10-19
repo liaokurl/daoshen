@@ -153,7 +153,9 @@ function fmt_(v) { return Math.round(v).toLocaleString('en-US'); }
 function notify_(title, message, tag, priority) {
   if (NOTIFY_EMAIL) {
     try {
-      MailApp.sendEmail({ to: NOTIFY_EMAIL, subject: '【刀神×葵哥】' + title, body: message + '\n\n打開 App：' + APP_URL, name: '刀神×葵哥' });
+      // 同一天的通知用同一個標題，Gmail 會疊成一串，不會洗版
+      const day = Utilities.formatDate(new Date(), 'Asia/Taipei', 'MM/dd');
+      MailApp.sendEmail({ to: NOTIFY_EMAIL, subject: '【刀神×葵哥】' + day + ' 通知', body: title + '\n' + message + '\n\n打開 App：' + APP_URL, name: '刀神×葵哥' });
     } catch (err) { console.warn('寄信失敗：' + err); }
   }
   if (!NTFY_TOPIC || NTFY_TOPIC.indexOf('請換成') === 0) return;
