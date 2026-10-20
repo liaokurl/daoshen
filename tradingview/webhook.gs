@@ -64,8 +64,8 @@ function testChart() {
 const NTFY_TOPIC = '請換成你的推播主題';
 const APP_URL = 'https://liaokurl.github.io/daoshen/';
 const NOTIFY_WARN = false;   // true＝第 1 根收在另一側時也先預警
-const NOTIFY_EMAIL = '';
-const TG_TOKEN = '';          // Telegram 機器人權杖（@BotFather 給的）；留空＝不用 Telegram      // 也寄 Gmail 的話填你的信箱（留空＝不寄）；Google 個人帳號每天最多寄 100 封
+const NOTIFY_EMAIL = '';      // 也寄 Gmail 的話填你的信箱（留空＝不寄）
+const TG_TOKEN = '';          // Telegram 機器人權杖（@BotFather 給的）；留空＝不用 Telegram
 
 function setupMonitor() {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'monitor').forEach(t => ScriptApp.deleteTrigger(t));
