@@ -66,6 +66,7 @@ const APP_URL = 'https://liaokurl.github.io/daoshen/';
 const NOTIFY_WARN = false;   // true＝第 1 根收在另一側時也先預警
 const NOTIFY_EMAIL = '';      // 也寄 Gmail 的話填你的信箱（留空＝不寄）
 const TG_TOKEN = '';          // Telegram 機器人權杖（@BotFather 給的）；留空＝不用 Telegram
+const TG_CHAT = '';           // 指定聊天室／群組編號（群組是負數）；留空＝自動抓最近傳話給機器人的聊天室
 
 function setupMonitor() {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'monitor').forEach(t => ScriptApp.deleteTrigger(t));
@@ -316,6 +317,7 @@ function setupEmail() {
 // ================= Telegram =================
 // 設定：把 TG_TOKEN 填上，先在 Telegram 對你的機器人按「開始」並傳一句話，再執行一次 setupTelegram
 function tgChatId_() {
+  if (TG_CHAT) return TG_CHAT;
   const props = PropertiesService.getScriptProperties();
   let id = props.getProperty('tgChat');
   if (id) return id;
@@ -331,7 +333,7 @@ function esc_(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
 function telegram_(title, message) {
   const chat = tgChatId_();
   if (!chat) { console.warn('還沒拿到 Telegram 聊天室：請先對機器人傳一句話'); return; }
-  const text = '<b>' + esc_(title) + '</b>\n' + esc_(message) + '\n<a href="' + APP_URL + '">打開 App</a>';
+  const text = '<b>' + esc_(title) + '</b>\n' + esc_(message) + '\n<a href="' + APP_URL + '">打開 App</a>\n<i>僅供參考，非投資建議</i>';
   UrlFetchApp.fetch('https://api.telegram.org/bot' + TG_TOKEN + '/sendMessage', {
     method: 'post', contentType: 'application/json', muteHttpExceptions: true,
     payload: JSON.stringify({ chat_id: chat, text: text, parse_mode: 'HTML', disable_web_page_preview: true }),
