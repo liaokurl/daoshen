@@ -672,6 +672,7 @@ function zsCard(c) {
     <h2>傑哥戰神帶狀（5 分K，近似）</h2>
     <div class="verdict"><span class="side">${z.dir > 0 ? "偏多" : z.dir < 0 ? "偏空" : "未定"}</span><span class="mode">${z.since ? `${fmtDateTime(z.since)} 翻向` : ""}</span></div>
     ${posBadge(z.dir, z.flipPrice, px)}
+    ${z.dir && z.flipPrice != null ? `<p class="say">🎯 目標1 <b class="${z.dir > 0 ? "t-up" : "t-down"}">${fmt(z.flipPrice + z.dir * 20)}</b>（${z.dir > 0 ? "+" : "−"}20，回測達標約 90%）｜目標2 <b class="${z.dir > 0 ? "t-up" : "t-down"}">${fmt(z.flipPrice + z.dir * 80)}</b>（${z.dir > 0 ? "+" : "−"}80，約 59%）｜🛑 帶狀翻${z.dir > 0 ? "空" : "多"}就出${c.my?.ce ? (c.my.ce.dir === z.dir ? "｜✅ 順主開關" : "｜⚠️ 逆主開關，回測勝率低") : ""}</p>` : ""}
     <div class="dash">
       <div><span>上軌</span><b>${fmt(z.up)}</b></div><div><span>中軌</span><b>${fmt(z.mid)}</b></div>
       <div><span>下軌</span><b>${fmt(z.lo)}</b></div><div><span>現價</span><b>${fmt(px)}｜${pos}</b></div>
