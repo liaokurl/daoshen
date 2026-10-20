@@ -221,3 +221,8 @@ details.card > .inner { padding: 0 16px 16px; }
 .more-flips summary { cursor: pointer; text-align: center; padding: 8px; border-radius: 10px; font-size: 14px; font-weight: 600; color: var(--accent); background: var(--accent-soft); list-style: none; }
 .more-flips summary::-webkit-details-marker { display: none; }
 .more-flips[open] summary { margin-bottom: 4px; }
+
+.pos.flat { background: var(--bg); color: var(--ink); border: 1px solid var(--line); }
+.pos.flat .pl b { margin-left: 6px; }
+.reentry { margin: 0 0 12px; padding: 12px 14px; border-radius: 14px; font-size: 15px; line-height: 1.7; border: 2px solid; }
+.reentry.up { border-color: var(--up); } .reentry.down { border-color: var(--down); }

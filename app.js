@@ -9,7 +9,7 @@ import { threeSwords, turtle, pcrView, swordSummary, SWORD_MODES } from "./engin
 import { kuigeModel } from "./engine/kuige.js";
 import { loadSignals } from "./signals.js";
 import { fetchLive, applyLive } from "./live.js";
-import { proSniper, washout, zhanshenBand, chandelierExit } from "./engine/myind.js";
+import { proSniper, washout, zhanshenBand, chandelierExit, tradesFrom } from "./engine/myind.js";
 import { sixLevels, periodRange, SIX_RATIOS, SIX_PERIODS } from "./engine/sixlayer.js";
 
 const VERSION = "車干製V1.5";
@@ -146,6 +146,7 @@ function render() {
   bind();
   bindSix();
   bindLayout();
+  document.getElementById("more-snipe")?.addEventListener("toggle", e => { state.snipeOpen = e.target.open; e.target.querySelector("summary").textContent = e.target.open ? "收起" : `顯示其他 ${e.target.querySelectorAll(".fr").length} 筆`; });
   document.getElementById("more-flips")?.addEventListener("toggle", e => { state.flipsOpen = e.target.open; e.target.querySelector("summary").textContent = e.target.open ? "收起" : `顯示其他 ${e.target.querySelectorAll(".fr").length} 筆`; });
   // 自動更新時保留輸入框的游標，不打斷正在輸入的數字
   if (focusId) { const el = document.getElementById(focusId); if (el && el.tagName === "INPUT") { el.focus(); try { el.setSelectionRange(caret, caret); } catch { /* 忽略 */ } } }
@@ -589,8 +590,9 @@ function myCard(c) {
   const bt = S?.summary ? `<p class="note">回測（預設參數，${fmtYmd(new Date(S.from + 8 * 3600e3).toISOString().slice(0, 10).replaceAll("-", "")).slice(5)} 起 ${S.summary.n} 筆）：勝率 ${pct(S.summary.winRate)}，合計 ${signed(S.summary.total)} 點（每口 ${S.summary.total >= 0 ? "" : "−"}${money(S.summary.total)}），平均每筆 ${signed(S.summary.avg)} 點，最好 ${signed(S.summary.best)}／最差 ${signed(S.summary.worst)}。未扣手續費與滑價。</p>` : "";
   return `<section class="card sword ${posCls}">
     <h2>我的指標｜微台 PRO v2.4.1 × 洗盤偵測（5 分K）</h2>
-    <div class="verdict"><span class="side">${esc(d.action)}</span><span class="mode">${d.entryPx ? "" : esc(d.position)}</span></div>
+    <div class="verdict"><span class="side">${esc(d.action)}</span><span class="mode"></span></div>
     ${posBadge(d.position === "持有多單" ? 1 : d.position === "持有空單" ? -1 : 0, d.entryPx ?? null, c.price ?? my.last?.c)}
+    ${sniperFlat(c, d)}
     <p class="note">最後一根：${fmtDateTime(my.last.end)}${my.src === "official" ? "（期交所微台逐筆）" : "（Yahoo 微型台指近一，官方資料出來後自動取代）"}</p>
     <div class="dash">
       ${cell("市場型態", d.market)}${cell("高週期方向", d.htf, toneOf(d.htf))}${cell("本週期結構", d.local, toneOf(d.local))}${cell("Sniper狀態", d.sniper, toneOf(d.sniper))}
@@ -603,7 +605,7 @@ function myCard(c) {
       ${cell("次要", w.lines.filter(x => !x.main).map(x => `${x.tag} ${fmt(x.price)}`).join("、") || "—")}
     </div>
     ${w.marks.length ? `<p class="note">最近洗盤訊號：${w.marks.slice(-3).reverse().map(m => `${fmtDateTime(m.t)} ${m.label} ${fmt(m.price)}`).join("；")}</p>` : ""}
-    <div class="review">${sigs}</div>
+    ${sniperTrades(c)}
     ${bt}
     <p class="note">照你的 Pine 原始碼在 App 裡重算（預設參數、狙擊融合模式），洗盤指標的四條支撐壓力已和你的 TradingView 截圖逐一核對一致。</p>
   </section>`;
@@ -628,6 +630,45 @@ function ceCard(c) {
     <p class="note">最近轉向：${e.flips.slice(-5).reverse().map(f => `${fmtDateTime(f.t)} ${f.side > 0 ? "轉多" : "轉空"} ${fmt(f.price)}`).join("；") || "—"}</p>
     <p class="note">Chandelier Exit(22, 3)：近 22 根最高收盤 − 3×ATR 是多方防守線，近 22 根最低收盤 + 3×ATR 是空方防守線，只往有利方向移動。回測 9/2～10/17 微台（每筆扣 5 點、轉向就反手）：17 筆、勝率 41%、合計 +2,864 點、最大回落 −1,896；同樣規則用 5 分、15 分、30 分K 都比較差。樣本只有 6 週，當方向濾網用，不是聖杯。</p>
   </section>`;
+}
+
+/** 狙擊：每筆交易的損益（進場→停利／盤整出場／反手），最上面是持有中 */
+function sniperTrades(c) {
+  const my = c.my, px = c.price ?? my.last?.c;
+  const T = tradesFrom(my.sn.signals, [{ c: px }]);
+  const rows = [...T.closed.map(t => ({ ...t, open: false })), ...(T.open ? [{ side: T.open.side, entry: T.open.entry, t0: T.open.t, pnl: T.open.pnl, open: true }] : [])];
+  if (!rows.length) return `<p class="note">最近沒有狙擊交易。</p>`;
+  const tone = v => (v > 0 ? "t-up" : v < 0 ? "t-down" : "");
+  const row = r => `<div class="fr${r.open ? " open" : ""}"><span>${fmtDateTime(r.t0)}</span><span class="${r.side > 0 ? "t-up" : "t-down"}">${r.side > 0 ? "多" : "空"} ${fmt(r.entry)}${r.open ? "" : ` → ${fmt(r.exit)}`}</span><b class="${tone(r.pnl)}">${signed(r.pnl)} 點<small>${r.open ? "持有中" : esc(r.why.replace("出場", ""))}</small></b></div>`;
+  const all = rows.slice().reverse(), first = all.slice(0, 5), rest = all.slice(5);
+  const closed = T.closed, tot = closed.reduce((a, t) => a + t.pnl, 0), win = closed.filter(t => t.pnl > 0).length;
+  return `<div class="flips">
+    ${first.map(row).join("")}
+    ${rest.length ? `<details class="more-flips" id="more-snipe"${state.snipeOpen ? " open" : ""}><summary>${state.snipeOpen ? "收起" : `顯示其他 ${rest.length} 筆`}</summary><div class="flips">${rest.map(row).join("")}</div></details>` : ""}
+    ${closed.length ? `<div class="fr sum"><span>已結算 ${closed.length} 筆</span><span>勝率 ${Math.round(win / closed.length * 100)}%</span><b class="${tone(tot)}">${signed(tot)} 點</b></div>` : ""}
+  </div>`;
+}
+
+/** 狙擊空手時：上一筆結果＋原趨勢還在就提示可再進場 */
+function sniperFlat(c, d) {
+  if (d.position !== "空手") return "";
+  const my = c.my, px = c.price ?? my.last?.c;
+  const T = tradesFrom(my.sn.signals, [{ c: px }]);
+  const last = T.closed.at(-1);
+  const head = `<div class="pos flat"><span class="k">空手</span>${last ? `<span class="pl">上一筆 ${last.side > 0 ? "多單" : "空單"} ${fmt(last.entry)} → ${fmt(last.exit)}（${esc(last.why.replace("出場", ""))}）<b class="${last.pnl > 0 ? "t-up" : last.pnl < 0 ? "t-down" : ""}">${signed(last.pnl)} 點</b></span>` : ""}</div>`;
+  if (!last || px == null) return head;
+  const side = last.side, z = my.zs, st = d.superTrend, line = d.redGreenLine;
+  const bandOk = z?.dir === side;
+  const stOk = st != null && (side > 0 ? px > st : px < st);
+  const ceOk = my.ce ? my.ce.dir === side : null;
+  if (bandOk && stOk) {
+    const name = side > 0 ? "多單" : "空單";
+    const zone = line != null ? `回到紅綠趨勢線 <b>${fmt(line)}</b> 附近再${side > 0 ? "接" : "空"}` : `現價附近`;
+    return head + `<div class="reentry ${side > 0 ? "up" : "down"}">🔁 <b>原趨勢還在，可再進場${name}</b><br>
+      參考進場：${zone}｜失效：${side > 0 ? "跌破" : "站上"} SuperTrend <b>${fmt(st)}</b><br>
+      依據：傑哥帶狀仍偏${side > 0 ? "多" : "空"}、價格在 SuperTrend ${side > 0 ? "上方" : "下方"}${ceOk == null ? "" : ceOk ? "、主開關同向 ✅" : "、但主開關反向 ⚠️（勝率較低）"}</div>`;
+  }
+  return head + `<p class="say">原${side > 0 ? "多" : "空"}方趨勢已轉弱（${!bandOk ? `傑哥帶狀已偏${z?.dir > 0 ? "多" : z?.dir < 0 ? "空" : "—"}` : ""}${!bandOk && !stOk ? "、" : ""}${!stOk ? `價格已${side > 0 ? "跌破" : "站上"} SuperTrend ${fmt(st)}` : ""}），等下一個狙擊訊號。</p>`;
 }
 
 /** 每次翻向的損益：翻向價進場，下一次翻向價出場；最後一筆用現價算浮動損益（每筆扣 0 點，未含手續費） */
