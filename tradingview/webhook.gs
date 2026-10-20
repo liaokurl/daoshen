@@ -136,7 +136,7 @@ function monitor() {
       if (st.pend && st.cnt >= 2) {
         const was = st.dir;
         st.dir = st.pend; st.pend = 0; st.cnt = 0;
-        if (!first) notify_(`戰神帶狀翻${st.dir > 0 ? '多' : '空'}｜微台 ${fmt_(b.c)}`, `${timeTxt} 收盤確認（第 2 根收在帶狀${st.dir > 0 ? '上方' : '下方'}）\n上軌 ${fmt_(up)}／下軌 ${fmt_(lo)}`, st.dir > 0 ? 'red_circle' : 'green_circle', 5);
+        if (!first) notify_(entryTitle_(st.dir, b.c), entryBody_(st.dir, b.c, timeTxt, up, lo, props), st.dir > 0 ? 'red_circle' : 'green_circle', 5);
       } else if (!first && NOTIFY_WARN && st.pend && st.cnt === 1) {
         notify_(`預警｜帶狀可能翻${st.pend > 0 ? '多' : '空'}`, `${timeTxt} 第 1 根收在帶狀${st.pend > 0 ? '上方' : '下方'}，再 1 根就翻向\n微台 ${fmt_(b.c)}`, 'warning', 3);
       }
@@ -343,3 +343,22 @@ function setupTelegram() {
   Logger.log(chat ? '找到聊天室 ' + chat : '找不到：請先在 Telegram 對機器人按「開始」並傳一句話，再執行一次');
   if (chat) telegram_('✅ 刀神×葵哥 通知已接上 Telegram', '之後帶狀翻向、主開關轉向、TradingView 快訊都會傳到這裡。');
 }
+
+// ================= 進場訊息格式（帶狀翻向） =================
+// 目標用固定點數：回測 9/2～10/19 微台 5 分K，只做順主開關的翻向時，+20 點達標率約 90%、+80 點約 59%（未達標就在下一次反向翻時出場）
+const TP1 = 20, TP2 = 80;
+function entryTitle_(dir, px) { return (dir > 0 ? '🔴 進場多單 ' : '🟢 進場空單 ') + fmt_(px); }
+function entryBody_(dir, px, timeTxt, up, lo, props) {
+  const ce = JSON.parse(props.getProperty('ce') || '{}').dir || 0;
+  const with_ = ce === dir;
+  return [
+    '🎯 目標1 ' + fmt_(px + dir * TP1) + '（' + (dir > 0 ? '+' : '−') + TP1 + ' 點，回測達標約 90%）',
+    '🎯 目標2 ' + fmt_(px + dir * TP2) + '（' + (dir > 0 ? '+' : '−') + TP2 + ' 點，回測達標約 59%）',
+    '🛑 出場：帶狀翻' + (dir > 0 ? '空' : '多') + '就出（反手）',
+    (with_ ? '✅ 順主開關（60 分K 吊燈＝' : '⚠️ 逆主開關（60 分K 吊燈＝') + (ce > 0 ? '多' : ce < 0 ? '空' : '未定') + '）' + (with_ ? '' : '，回測逆勢這側勝率低，建議不做'),
+    '',
+    '戰神帶狀 5 分K｜' + timeTxt + ' 收盤確認',
+    '上軌 ' + fmt_(up) + '／下軌 ' + fmt_(lo),
+  ].join('\n');
+}
+function testEntry() { const p = PropertiesService.getScriptProperties(); notify_('【測試】' + entryTitle_(1, 46888), entryBody_(1, 46888, '10:05', 46932, 46884, p), 'red_circle', 4); }
