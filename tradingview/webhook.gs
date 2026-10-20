@@ -346,15 +346,14 @@ function setupTelegram() {
 
 // ================= 進場訊息格式（帶狀翻向） =================
 // 目標用固定點數：回測 9/2～10/19 微台 5 分K，只做順主開關的翻向時，+20 點達標率約 90%、+80 點約 59%（未達標就在下一次反向翻時出場）
-const TP1 = 20, TP2 = 80;
+const TP1 = 20, TP2 = 80, TRAIL = 180;   // 回測（9/2～10/20，順主開關）：移動停利 180 合計 +1,621 點、140 合計 +2,866 點
 function entryTitle_(dir, px) { return (dir > 0 ? '🔴 進場多單 ' : '🟢 進場空單 ') + fmt_(px); }
 function entryBody_(dir, px, timeTxt, up, lo, props) {
   const ce = JSON.parse(props.getProperty('ce') || '{}').dir || 0;
   const with_ = ce === dir;
   return [
-    '🎯 目標1 ' + fmt_(px + dir * TP1) + '（' + (dir > 0 ? '+' : '−') + TP1 + ' 點，回測達標約 90%）',
-    '🎯 目標2 ' + fmt_(px + dir * TP2) + '（' + (dir > 0 ? '+' : '−') + TP2 + ' 點，回測達標約 59%）',
-    '🛑 出場：帶狀翻' + (dir > 0 ? '空' : '多') + '就出（反手）',
+    '🛡 智慧單：移動停利 ' + TRAIL + ' 點（初始停損 ' + fmt_(px - dir * TRAIL) + '）',
+    '🎯 參考目標 ' + fmt_(px + dir * TP1) + '（' + (dir > 0 ? '+' : '−') + TP1+ '）／' + fmt_(px + dir * TP2) + '（' + (dir > 0 ? '+' : '−') + TP2 + '）',
     (with_ ? '✅ 順主開關（60 分K 吊燈＝' : '⚠️ 逆主開關（60 分K 吊燈＝') + (ce > 0 ? '多' : ce < 0 ? '空' : '未定') + '）' + (with_ ? '' : '，回測逆勢這側勝率低，建議不做'),
     '',
     '戰神帶狀 5 分K｜' + timeTxt + ' 收盤確認',

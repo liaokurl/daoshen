@@ -656,19 +656,7 @@ function sniperFlat(c, d) {
   const T = tradesFrom(my.sn.signals, [{ c: px }]);
   const last = T.closed.at(-1);
   const head = `<div class="pos flat"><span class="k">空手</span>${last ? `<span class="pl">上一筆 ${last.side > 0 ? "多單" : "空單"} ${fmt(last.entry)} → ${fmt(last.exit)}（${esc(last.why.replace("出場", ""))}）<b class="${last.pnl > 0 ? "t-up" : last.pnl < 0 ? "t-down" : ""}">${signed(last.pnl)} 點</b></span>` : ""}</div>`;
-  if (!last || px == null) return head;
-  const side = last.side, z = my.zs, st = d.superTrend, line = d.redGreenLine;
-  const bandOk = z?.dir === side;
-  const stOk = st != null && (side > 0 ? px > st : px < st);
-  const ceOk = my.ce ? my.ce.dir === side : null;
-  if (bandOk && stOk) {
-    const name = side > 0 ? "多單" : "空單";
-    const zone = line != null ? `回到紅綠趨勢線 <b>${fmt(line)}</b> 附近再${side > 0 ? "接" : "空"}` : `現價附近`;
-    return head + `<div class="reentry ${side > 0 ? "up" : "down"}">🔁 <b>原趨勢還在，可再進場${name}</b><br>
-      參考進場：${zone}｜失效：${side > 0 ? "跌破" : "站上"} SuperTrend <b>${fmt(st)}</b><br>
-      依據：傑哥帶狀仍偏${side > 0 ? "多" : "空"}、價格在 SuperTrend ${side > 0 ? "上方" : "下方"}${ceOk == null ? "" : ceOk ? "、主開關同向 ✅" : "、但主開關反向 ⚠️（勝率較低）"}</div>`;
-  }
-  return head + `<p class="say">原${side > 0 ? "多" : "空"}方趨勢已轉弱（${!bandOk ? `傑哥帶狀已偏${z?.dir > 0 ? "多" : z?.dir < 0 ? "空" : "—"}` : ""}${!bandOk && !stOk ? "、" : ""}${!stOk ? `價格已${side > 0 ? "跌破" : "站上"} SuperTrend ${fmt(st)}` : ""}），等下一個狙擊訊號。</p>`;
+  return head;
 }
 
 /** 每次翻向的損益：翻向價進場，下一次翻向價出場；最後一筆用現價算浮動損益（每筆扣 0 點，未含手續費） */
@@ -713,7 +701,7 @@ function zsCard(c) {
     <h2>傑哥戰神帶狀（5 分K，近似）</h2>
     <div class="verdict"><span class="side">${z.dir > 0 ? "偏多" : z.dir < 0 ? "偏空" : "未定"}</span><span class="mode">${z.since ? `${fmtDateTime(z.since)} 翻向` : ""}</span></div>
     ${posBadge(z.dir, z.flipPrice, px)}
-    ${z.dir && z.flipPrice != null ? `<p class="say">🎯 目標1 <b class="${z.dir > 0 ? "t-up" : "t-down"}">${fmt(z.flipPrice + z.dir * 20)}</b>（${z.dir > 0 ? "+" : "−"}20，回測達標約 90%）｜目標2 <b class="${z.dir > 0 ? "t-up" : "t-down"}">${fmt(z.flipPrice + z.dir * 80)}</b>（${z.dir > 0 ? "+" : "−"}80，約 59%）｜🛑 帶狀翻${z.dir > 0 ? "空" : "多"}就出${c.my?.ce ? (c.my.ce.dir === z.dir ? "｜✅ 順主開關" : "｜⚠️ 逆主開關，回測勝率低") : ""}</p>` : ""}
+    ${z.dir && z.flipPrice != null ? `<p class="say">🛡 智慧單：移動停利 180 點（初始停損 <b>${fmt(z.flipPrice - z.dir * 180)}</b>）｜參考目標 +20 <b class="${z.dir > 0 ? "t-up" : "t-down"}">${fmt(z.flipPrice + z.dir * 20)}</b>、+80 <b class="${z.dir > 0 ? "t-up" : "t-down"}">${fmt(z.flipPrice + z.dir * 80)}</b>${c.my?.ce ? (c.my.ce.dir === z.dir ? "｜✅ 順主開關" : "｜⚠️ 逆主開關，回測勝率低，建議不做") : ""}</p>` : ""}
     <div class="dash">
       <div><span>上軌</span><b>${fmt(z.up)}</b></div><div><span>中軌</span><b>${fmt(z.mid)}</b></div>
       <div><span>下軌</span><b>${fmt(z.lo)}</b></div><div><span>現價</span><b>${fmt(px)}｜${pos}</b></div>
