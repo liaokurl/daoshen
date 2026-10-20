@@ -11,6 +11,7 @@ import { loadSignals } from "./signals.js";
 import { fetchLive, applyLive } from "./live.js";
 import { proSniper, washout, zhanshenBand, chandelierExit, tradesFrom } from "./engine/myind.js";
 import { sixLevels, periodRange, SIX_RATIOS, SIX_PERIODS } from "./engine/sixlayer.js";
+import { swingLows } from "./engine/swing.js";
 
 const VERSION = "車干製V1.5";
 const $app = document.getElementById("app");
@@ -110,7 +111,7 @@ function compute() {
     const liveTmf = B.tmf5.find(s => s.complete === false);
     const asOf5 = liveTmf && B.tmfLive?.lastBarTime ? B.tmfLive.lastBarTime + 60_000 : (b5.at(-1)?.end ?? 0);
     const done5 = b5.filter(b => b.end <= asOf5);
-    if (done5.length > 100) my = { sn: proSniper(done5), wo: washout(done5), zs: zhanshenBand(done5), ce: chandelierExit(aggregate(done5, 60).filter(b => !b.partial)), last: done5.at(-1), live: Boolean(liveTmf), src: B.tmf5.find(s => s.start + s.type === done5.at(-1).key)?.source };
+    if (done5.length > 100) my = { sn: proSniper(done5), wo: washout(done5), zs: zhanshenBand(done5), ce: chandelierExit(aggregate(done5, 60).filter(b => !b.partial)), sw60: swingLows(aggregate(done5, 60).filter(b => !b.partial)), sw30: swingLows(aggregate(done5, 30).filter(b => !b.partial)), last: done5.at(-1), live: Boolean(liveTmf), src: B.tmf5.find(s => s.start + s.type === done5.at(-1).key)?.source };
   }
   return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, chgLabel, dataAsOf, liveNow, R, now, sw, tt, summary, pcr, kg, my };
 }
@@ -130,7 +131,7 @@ function render() {
   }
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
   const defs = {
-    dao: [["zs", "傑哥戰神帶狀", zsCard], ["my", "我的指標（狙擊）", myCard], ["ce", "多空主開關", ceCard], ["six", "六層第 5 層", sixMini], ["sword", "三刀流", swordCard], ["sig", "TradingView 快訊", signalsCard], ["struct", "均線結構", structureCard], ["chart", "走勢圖", chartCard]],
+    dao: [["zs", "傑哥戰神帶狀", zsCard], ["my", "我的指標（狙擊）", myCard], ["ce", "多空主開關", ceCard], ["six", "六層第 5 層", sixMini], ["swing", "前低第二支腳", swingCard], ["sword", "三刀流", swordCard], ["sig", "TradingView 快訊", signalsCard], ["struct", "均線結構", structureCard], ["chart", "走勢圖", chartCard]],
     kui: [["six", "六層多空點位", sixCard], ["kuige", "葵哥三等分", kuigeCard]],
     plan: [["plan", "盤前計畫", planCard], ["review", "檢討", reviewCard]],
     more: [["ext", "外部資料", extCard], ["stats", "回測統計", statsCard], ["status", "資料狀態", statusCard]],
@@ -608,6 +609,28 @@ function myCard(c) {
     ${sniperTrades(c)}
     ${bt}
     <p class="note">照你的 Pine 原始碼在 App 裡重算（預設參數、狙擊融合模式），洗盤指標的四條支撐壓力已和你的 TradingView 截圖逐一核對一致。</p>
+  </section>`;
+}
+
+// ---------- 前低第二支腳（60 分K 主訊號、30 分K 提早提醒） ----------
+function swingCard(c) {
+  const a = c.my?.sw60, b = c.my?.sw30;
+  if (!a || !b) return "";
+  const px = c.price ?? a.close;
+  const recent = (sw, bars) => { const s = sw.signals.at(-1); return s && s.result == null && Date.now() - s.t < bars * (sw === a ? 3600e3 : 1800e3) ? s : null; };
+  const live60 = recent(a, 3), live30 = recent(b, 3);
+  const badge = (s, tf, main) => `<div class="${main ? "pos long" : "reentry up"}"><span class="k">${main ? "🔴 60 分K 前低守住" : "🟠 30 分K 前低守住（提早提醒）"}</span>
+    <span class="pl">${fmtDateTime(s.t)} 回測前低 <b>${fmt(s.level)}</b>（最低 ${fmt(s.low)}）收 ${fmt(s.close)}｜做多參考：停損 <b>${fmt(s.stop)}</b>、移動停利約 ${fmt(s.trail)} 點</span></div>`;
+  const lowsOf = (sw, tf) => sw.lows.length ? sw.lows.slice(0, 3).map(l => `<div class="fr"><span>${tf} 前低</span><span>${fmt(l.price)}</span><b class="${l.near ? "t-up" : ""}">${signed(l.price - px)} 點${l.near ? "<small>接近中</small>" : ""}</b></div>`).join("") : `<div class="fr"><span>${tf} 前低</span><span>—</span><b>目前沒有</b></div>`;
+  const hist = [...a.signals.map(s => ({ ...s, tf: "60分" })), ...b.signals.map(s => ({ ...s, tf: "30分" }))].sort((x, y) => y.t - x.t).slice(0, 5);
+  const rate = sw => { const d = sw.signals.filter(s => s.result); return d.length ? `${Math.round(d.filter(s => s.result > 0).length / d.length * 100)}%（${d.length} 次）` : "—"; };
+  return `<section class="card sword ${live60 || live30 ? "up" : "neutral"}">
+    <h2>前低第二支腳（60 分K＋30 分K）</h2>
+    ${live60 ? badge(live60, "60", true) : ""}${!live60 && live30 ? badge(live30, "30", false) : ""}
+    ${!live60 && !live30 ? `<p class="say">目前沒有新的訊號。價格回到下面這些前低、而且 K 棒收盤守住時會跳出提示。</p>` : ""}
+    <div class="flips">${lowsOf(a, "60分")}${lowsOf(b, "30分")}</div>
+    ${hist.length ? `<p class="note">最近訊號：${hist.map(s => `${fmtDateTime(s.t)} ${s.tf} ${fmt(s.level)} ${s.result > 0 ? "✓ 守住" : s.result < 0 ? "✗ 跌破" : "…進行中"}`).join("；")}</p>` : ""}
+    <p class="note">規則：前低＝左右各 3 根 K 的最低點；價格回到前低 ±0.3 ATR 內、而且這根收盤站在前低之上＝守住。之後先漲 1.5 ATR 算 ✓、先跌 1 ATR 算 ✗。App 內近 12 個交易日：60 分K 守住 ${rate(a)}、30 分K ${rate(b)}。7 週回測：60 分K 守住 79～87%（隨機價位 50～64%），30 分K 75～84%（隨機 66～74%）。前高「第二次過不去」沒有優勢，所以不做。</p>
   </section>`;
 }
 

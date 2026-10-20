@@ -146,6 +146,7 @@ function monitor() {
     st.bars = bars.slice(-40);
     props.setProperty('zs', JSON.stringify(st));
     ceUpdate_(d, props);
+    try { h30Update_(d, props); } catch (err) { console.warn('30 分K 更新失敗：' + err); }
   } finally {
     lock.releaseLock();
   }
@@ -214,7 +215,8 @@ function ceSeed_() {
 }
 
 /** tmf5 紀錄（每盤一筆，bars 為 5 分K 陣列，null＝沒成交）→ 60 分K；沒成交的格子沿用前收，跟 App 一樣 */
-function ceSeedBars_(recs) {
+function ceSeedBars_(recs, per, span) {
+  per = per || 12; span = span || H;
   const out = [];
   recs.filter(r => r.complete !== false).forEach(r => {
     const y = +r.start.slice(0, 4), mo = +r.start.slice(4, 6) - 1, d = +r.start.slice(6, 8);
@@ -223,7 +225,7 @@ function ceSeedBars_(recs) {
     if (!first) return;
     let last = first[0], cur = null;
     r.bars.forEach((b, i) => {
-      const k = base + Math.floor(i / 12) * H;
+      const k = base + Math.floor(i / per) * span;
       const v = b || [last, last, last, last];
       last = v[3];
       if (!cur || cur.t !== k) { if (cur) out.push(cur); cur = { t: k, h: v[1], l: v[2], c: v[3] }; }
@@ -298,6 +300,7 @@ function ceUpdate_(d, props) {
   }
   st.bars = bars; st.dir = e.dir; st.lastT = last.t;
   props.setProperty('ce', JSON.stringify(st));
+  try { swingNotify_(bars, 60, props); } catch (err) { console.warn('前低檢查失敗：' + err); }
 }
 
 /** 在編輯器執行：看主開關目前狀態（不推播） */
@@ -363,3 +366,78 @@ function entryBody_(dir, px, timeTxt, up, lo, props) {
   ].join('\n');
 }
 function testEntry() { const p = PropertiesService.getScriptProperties(); notify_('【測試】' + entryTitle_(1, 46888), entryBody_(1, 46888, '10:05', 46932, 46884, p), 'red_circle', 4); }
+
+// ================= 前低第二支腳（60 分K 主訊號、30 分K 提早提醒） =================
+// 回測 9/2～10/21 微台：60 分K 回測前低且收盤守住，之後先漲 1.5 ATR 的比例 79～87%（隨機價位 50～64%）；30 分K 75～84%（隨機 66～74%）
+const SW_PIV = 3, SW_LOOK = 60, SW_TOL = 0.3, H30_KEEP = 140, M30 = 30 * 60000;
+
+function swingSignal_(bars) {
+  const N = bars.length; if (N < 20) return null;
+  const C = bars.map(b => b.c), Hh = bars.map(b => b.h), Ll = bars.map(b => b.l);
+  const tr = bars.map((b, i) => i ? Math.max(b.h - b.l, Math.abs(b.h - C[i - 1]), Math.abs(b.l - C[i - 1])) : b.h - b.l);
+  const atr = i => { if (i < 14) return null; let a = 0; for (let k = i - 13; k <= i; k++) a += tr[k]; return a / 14; };
+  const piv = [];
+  for (let i = SW_PIV; i < N - SW_PIV; i++) { let ok = true; for (let k = i - SW_PIV; k <= i + SW_PIV; k++) if (k !== i && Ll[k] < Ll[i]) { ok = false; break; } if (ok) piv.push({ i: i, p: Ll[i], broken: false, touched: false }); }
+  let sig = null;
+  for (let j = 0; j < N; j++) { const a = atr(j); if (!a) continue; const tol = SW_TOL * a;
+    piv.forEach(v => { if (v.broken || v.touched || j <= v.i + SW_PIV || j - v.i > SW_LOOK) return;
+      if (Ll[j] < v.p - tol) { v.broken = true; return; }
+      if (Ll[j] <= v.p + tol) { v.touched = true; if (C[j] > v.p && j === N - 1) sig = { t: bars[j].t, level: v.p, low: Ll[j], close: C[j], stop: v.p - 0.5 * a, trail: 2 * a }; } }); }
+  return sig;
+}
+
+function swingNotify_(bars, tf, props) {
+  const sig = swingSignal_(bars); if (!sig) return;
+  const key = 'swing' + tf; if (Number(props.getProperty(key) || 0) >= sig.t) return;
+  props.setProperty(key, String(sig.t));
+  const ce = JSON.parse(props.getProperty('ce') || '{}').dir || 0;
+  const span = tf === 60 ? H : M30;
+  const timeTxt = Utilities.formatDate(new Date(sig.t + span), 'Asia/Taipei', 'MM/dd HH:mm');
+  const title = tf === 60 ? '🔴 60分K 前低守住｜做多參考 ' + fmt_(sig.close) : '🟠 30分K 前低守住（提早提醒）' + fmt_(sig.close);
+  notify_(title, [
+    '📍 回測前低 ' + fmt_(sig.level) + '（最低 ' + fmt_(sig.low) + '），' + timeTxt + ' 收 ' + fmt_(sig.close) + ' 守住',
+    '🛡 停損 ' + fmt_(sig.stop) + '｜移動停利約 ' + fmt_(sig.trail) + ' 點',
+    ce > 0 ? '✅ 主開關＝多' : ce < 0 ? '⚠️ 主開關＝空（逆勢，小量或等 60 分K 確認）' : '主開關未定',
+    tf === 60 ? '回測 60 分K 守住率約 8 成' : '30 分K 只是提早提醒，等 60 分K 收盤確認更穩',
+  ].join('\n'), 'red_circle', 4);
+}
+
+function h30Key_(ms) { const s = sessionStartOf_(ms); return s == null ? null : s + Math.floor((ms - s) / M30) * M30; }
+
+function h30Update_(d, props) {
+  let st = JSON.parse(props.getProperty('h30') || 'null');
+  if (!st || !st.bars || st.bars.length < 40) {
+    const res = UrlFetchApp.fetch(APP_URL + 'data/bundle.json?t=' + Date.now(), { muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) return;
+    const bars0 = ceSeedBars_(JSON.parse(res.getContentText()).tmf5 || [], 6, M30);
+    if (bars0.length < 40) return;
+    st = { bars: bars0.slice(-H30_KEEP), lastT: bars0[bars0.length - 1].t };
+    props.setProperty('h30', JSON.stringify(st));
+    return;
+  }
+  const ts = d.timestamp || [], q = d.indicators.quote[0];
+  const map = {}; let lastMin = 0;
+  for (let i = 0; i < ts.length; i++) {
+    const h = q.high[i], l = q.low[i], c = q.close[i];
+    if ([h, l, c].some(v => v == null)) continue;
+    const start = fixYahoo_(ts[i] * 1000 - 60000), k = h30Key_(start);
+    if (k == null) continue;
+    lastMin = Math.max(lastMin, start);
+    const b = map[k];
+    if (!b) map[k] = { t: k, h: h, l: l, c: c, first: start, last: start };
+    else { b.h = Math.max(b.h, h); b.l = Math.min(b.l, l); if (start >= b.last) { b.c = c; b.last = start; } b.first = Math.min(b.first, start); }
+  }
+  const byT = {}; st.bars.forEach(b => { byT[b.t] = b; });
+  let added = false;
+  Object.keys(map).map(k => map[k]).forEach(b => {
+    const hr = new Date(b.t + 8 * H).getUTCHours();
+    const sEnd = sessionStartOf_(b.t) + (hr >= 15 || hr < 5 ? 14 : 5) * H;
+    const done = Math.min(b.t + M30, sEnd) <= lastMin + 60000, whole = b.first <= b.t + 5 * 60000;
+    if (done && whole && b.t > st.lastT) { byT[b.t] = { t: b.t, h: b.h, l: b.l, c: b.c }; added = true; }
+  });
+  if (!added) return;
+  const bars = Object.keys(byT).map(k => byT[k]).sort((a, b) => a.t - b.t).slice(-H30_KEEP);
+  st.bars = bars; st.lastT = bars[bars.length - 1].t;
+  props.setProperty('h30', JSON.stringify(st));
+  swingNotify_(bars, 30, props);
+}
