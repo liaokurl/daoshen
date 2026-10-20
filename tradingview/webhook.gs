@@ -64,7 +64,8 @@ function testChart() {
 const NTFY_TOPIC = '請換成你的推播主題';
 const APP_URL = 'https://liaokurl.github.io/daoshen/';
 const NOTIFY_WARN = false;   // true＝第 1 根收在另一側時也先預警
-const NOTIFY_EMAIL = '';      // 也寄 Gmail 的話填你的信箱（留空＝不寄）；Google 個人帳號每天最多寄 100 封
+const NOTIFY_EMAIL = '';
+const TG_TOKEN = '';          // Telegram 機器人權杖（@BotFather 給的）；留空＝不用 Telegram      // 也寄 Gmail 的話填你的信箱（留空＝不寄）；Google 個人帳號每天最多寄 100 封
 
 function setupMonitor() {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'monitor').forEach(t => ScriptApp.deleteTrigger(t));
@@ -153,6 +154,9 @@ function wma_(arr, n) { let a = 0; for (let k = 0; k < n; k++) a += arr[arr.leng
 function fmt_(v) { return Math.round(v).toLocaleString('en-US'); }
 
 function notify_(title, message, tag, priority) {
+  if (TG_TOKEN) {
+    try { telegram_(title, message); } catch (err) { console.warn('Telegram 失敗：' + err); }
+  }
   if (NOTIFY_EMAIL) {
     try {
       // 同一天的通知用同一個標題，Gmail 會疊成一串，不會洗版
@@ -307,4 +311,35 @@ function testCe() {
 function setupEmail() {
   Logger.log('今天還能寄 ' + MailApp.getRemainingDailyQuota() + ' 封');
   MailApp.sendEmail({ to: NOTIFY_EMAIL, subject: '【刀神×葵哥】Gmail 通知已開啟', body: '之後多空主開關轉向、戰神帶狀翻向都會寄到這裡。\n\n打開 App：' + APP_URL, name: '刀神×葵哥' });
+}
+
+// ================= Telegram =================
+// 設定：把 TG_TOKEN 填上，先在 Telegram 對你的機器人按「開始」並傳一句話，再執行一次 setupTelegram
+function tgChatId_() {
+  const props = PropertiesService.getScriptProperties();
+  let id = props.getProperty('tgChat');
+  if (id) return id;
+  const res = UrlFetchApp.fetch('https://api.telegram.org/bot' + TG_TOKEN + '/getUpdates', { muteHttpExceptions: true });
+  const j = JSON.parse(res.getContentText());
+  const ups = (j.result || []).filter(u => u.message && u.message.chat);
+  if (!ups.length) return null;
+  id = String(ups[ups.length - 1].message.chat.id);
+  props.setProperty('tgChat', id);
+  return id;
+}
+function esc_(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function telegram_(title, message) {
+  const chat = tgChatId_();
+  if (!chat) { console.warn('還沒拿到 Telegram 聊天室：請先對機器人傳一句話'); return; }
+  const text = '<b>' + esc_(title) + '</b>\n' + esc_(message) + '\n<a href="' + APP_URL + '">打開 App</a>';
+  UrlFetchApp.fetch('https://api.telegram.org/bot' + TG_TOKEN + '/sendMessage', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    payload: JSON.stringify({ chat_id: chat, text: text, parse_mode: 'HTML', disable_web_page_preview: true }),
+  });
+}
+function setupTelegram() {
+  PropertiesService.getScriptProperties().deleteProperty('tgChat');
+  const chat = tgChatId_();
+  Logger.log(chat ? '找到聊天室 ' + chat : '找不到：請先在 Telegram 對機器人按「開始」並傳一句話，再執行一次');
+  if (chat) telegram_('✅ 刀神×葵哥 通知已接上 Telegram', '之後帶狀翻向、主開關轉向、TradingView 快訊都會傳到這裡。');
 }
