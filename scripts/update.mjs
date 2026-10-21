@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { fetchBuffer, taifexDailyZipUrl, fetchFutDataDown, fetchYahooChart, decodeBig5, fetchPcr, fetchFearGreed } from "./lib/sources.mjs";
 import { swordStudy } from "../engine/sword.js";
 import { yahooToRecords as yahooToRecordsShared } from "../engine/yahoo.js";
-import { parseDailyCsv, buildCalendar, expiryOverrides, contractDataset, bars15Of, tmfContinuous, rollSpread } from "./lib/dataset.mjs";
+import { parseDailyCsv, buildCalendar, expiryOverrides, contractDataset, bars15Of, tmfContinuous, rollSpreadBest } from "./lib/dataset.mjs";
 import { buildBars15 } from "../engine/bars.js";
 import { proSniper, tradeSummary } from "../engine/myind.js";
 import { ticksToSessions } from "../engine/bars.js";
@@ -294,11 +294,11 @@ function buildBundle(all, stats, live) {
   let next = null;
   if (addDays(today, 7) >= expiryOf(contract)) {
     const dsN = contractDataset(nextC, { ...all, provisional: [], nowMs: NOW });
-    const sp = rollSpread(all.dailyRows, contract, nextC);
+    const sp = rollSpreadBest(all.tmfRecords, all.dailyRows, contract, nextC);
     if (dsN.summaries.length && sp) next = { contract: nextC, sessions15: dsN.sessions15.filter(s => s.td >= keepFrom), summaries: dsN.summaries.slice(-400), spread: sp.spread, spreadTd: sp.td };
   }
   const prevC = (() => { const y = Number(contract.slice(0, 4)), m = Number(contract.slice(4, 6)) - 1; return m ? `${y}${String(m).padStart(2, "0")}` : `${y - 1}12`; })();
-  const rollInfo = addDays(expiryOf(prevC), 7) >= today ? rollSpread(all.dailyRows, prevC, contract) : null;
+  const rollInfo = addDays(expiryOf(prevC), 7) >= today ? rollSpreadBest(all.tmfRecords, all.dailyRows, prevC, contract) : null;
   const officialThrough = ds.sessions15.filter(s => s.source === "official").at(-1);
   return {
     builtAt: NOW,

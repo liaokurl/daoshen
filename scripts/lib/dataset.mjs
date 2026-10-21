@@ -111,6 +111,33 @@ export function rollSpread(dailyRows, from, to) {
   return { from, to, td, spread: x[to] - x[from], fromClose: x[from], toClose: x[to] };
 }
 
+/** 兩個合約同一盤、同一根 K 棒都有成交的最後一根：新 − 舊 */
+export function sameSlotDiff(oldRec, newRec) {
+  if (!oldRec || !newRec) return null;
+  for (let k = Math.min(oldRec.bars.length, newRec.bars.length) - 1; k >= 0; k -= 1) {
+    const a = oldRec.bars[k], b = newRec.bars[k];
+    if (a && b) return b[3] - a[3];
+  }
+  return null;
+}
+
+/** 換月價差優先用微台逐筆（同一根 K 棒），沒有才用日行情收盤 */
+export function rollSpreadBest(tmfRecords, dailyRows, from, to) {
+  const by = new Map();
+  for (const r of tmfRecords ?? []) {
+    if (r.source !== "official" || (r.contract !== from && r.contract !== to)) continue;
+    const key = sessionKey(r.start, r.type);
+    if (!by.has(key)) by.set(key, {});
+    by.get(key)[r.contract] = r;
+  }
+  const keys = [...by.keys()].sort((a, b) => sessionStartMs(b.slice(0, 8), b.slice(8)) - sessionStartMs(a.slice(0, 8), a.slice(8)));
+  for (const k of keys) {
+    const d = sameSlotDiff(by.get(k)[from], by.get(k)[to]);
+    if (d != null) return { from, to, td: k, spread: d, src: "tmf" };
+  }
+  return rollSpread(dailyRows, from, to);
+}
+
 export function tmfContinuous(tmfRecords, { calendar, expiry, dailyRows = [] }, toContract = null) {
   const byKey = new Map(); // key -> Map(contract -> rec)
   for (const r of tmfRecords) {
@@ -133,13 +160,12 @@ export function tmfContinuous(tmfRecords, { calendar, expiry, dailyRows = [] }, 
     const rec = m.get(front) ?? [...m.values()].sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))[0];
     if (!rec) continue;
     if (nextFront && rec.contract !== nextFront) {
-      const lastClose = x => x?.bars.filter(Boolean).at(-1)?.[3];
-      // 換月那一盤兩個合約都有資料 → 直接用收盤差；沒有（例如結算日官方逐筆還沒出來）→ 往前找兩合約都有的一盤，再不行用日行情
+      // 換月那一盤兩個合約都有資料 → 取「同一根 K 棒」的收盤差（結算日舊合約 13:30 就停了，不能拿兩個收盤直接相減）；
+      // 沒有（例如結算日官方逐筆還沒出來）→ 往前找兩合約都有的一盤，再不行用日行情
       let diff = null;
       for (let k = i; k >= Math.max(0, i - 12) && diff == null; k -= 1) {
         const mm = byKey.get(keys[k]);
-        const a = lastClose(mm.get(nextFront)), b = lastClose(mm.get(rec.contract));
-        if (a != null && b != null) diff = a - b;
+        diff = sameSlotDiff(mm.get(rec.contract), mm.get(nextFront));
       }
       if (diff == null) diff = rollSpread(dailyRows, rec.contract, nextFront)?.spread ?? 0;
       offset += diff;
