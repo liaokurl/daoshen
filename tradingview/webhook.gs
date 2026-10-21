@@ -141,7 +141,7 @@ function monitor() {
         const was = st.dir;
         st.dir = st.pend; st.pend = 0; st.cnt = 0;
         props.setProperty('zsFlip', JSON.stringify({ t: b.t + 300000, side: st.dir, px: b.c, ce: (JSON.parse(props.getProperty('ce') || '{}').dir || 0) }));
-        if (!first) notify_(entryTitle_(st.dir, b.c), entryBody_(st.dir, b.c, timeTxt, up, lo, props), st.dir > 0 ? 'red_circle' : 'green_circle', 5);
+        if (!first) notify_(entryTitle_(st.dir, b.c), entryBody_(st.dir, b.c, timeTxt, up, lo, props, d, b.t + 300000), st.dir > 0 ? 'red_circle' : 'green_circle', 5);
       } else if (!first && NOTIFY_WARN && st.pend && st.cnt === 1) {
         notify_(`預警｜帶狀可能翻${st.pend > 0 ? '多' : '空'}`, `${timeTxt} 第 1 根收在帶狀${st.pend > 0 ? '上方' : '下方'}，再 1 根就翻向\n微台 ${fmt_(b.c)}`, 'warning', 3);
       }
@@ -357,12 +357,12 @@ function setupTelegram() {
 // 目標用固定點數：回測 9/2～10/19 微台 5 分K，只做順主開關的翻向時，+20 點達標率約 90%、+80 點約 59%（未達標就在下一次反向翻時出場）
 const TP1 = 20, TP2 = 80, TRAIL = 180;   // 回測（9/2～10/20，順主開關）：移動停利 180 合計 +1,621 點、140 合計 +2,866 點
 function entryTitle_(dir, px) { return (dir > 0 ? '🔴 進場多單 ' : '🟢 進場空單 ') + fmt_(px); }
-function entryBody_(dir, px, timeTxt, up, lo, props) {
+function entryBody_(dir, px, timeTxt, up, lo, props, d, at) {
   const ce = JSON.parse(props.getProperty('ce') || '{}').dir || 0;
   const with_ = ce === dir;
   return [
     '🛡 智慧單：移動停利 ' + TRAIL + ' 點（初始停損 ' + fmt_(px - dir * TRAIL) + '）',
-    '🎯 參考目標 ' + fmt_(px + dir * TP1) + '（' + (dir > 0 ? '+' : '−') + TP1+ '）／' + fmt_(px + dir * TP2) + '（' + (dir > 0 ? '+' : '−') + TP2 + '）',
+    targetLine_(dir, px, d, at),
     (with_ ? '✅ 順主開關（60 分K 吊燈＝' : '⚠️ 逆主開關（60 分K 吊燈＝') + (ce > 0 ? '多' : ce < 0 ? '空' : '未定') + '）' + (with_ ? '' : '，回測逆勢這側勝率低，建議不做'),
     dualLine_(dir, props),
     '',
@@ -370,7 +370,7 @@ function entryBody_(dir, px, timeTxt, up, lo, props) {
     '上軌 ' + fmt_(up) + '／下軌 ' + fmt_(lo),
   ].join('\n');
 }
-function testEntry() { const p = PropertiesService.getScriptProperties(); notify_('【測試】' + entryTitle_(1, 46888), entryBody_(1, 46888, '10:05', 46932, 46884, p), 'red_circle', 4); }
+function testEntry() { const p = PropertiesService.getScriptProperties(), d = chartData_('WTM&'), px = Number(d.quote && d.quote.price) || 47000; notify_('【測試】' + entryTitle_(1, px), entryBody_(1, px, '測試', px + 20, px - 20, p, d, Date.now()), 'red_circle', 4); }
 
 // ================= 前低第二支腳（60 分K 主訊號、30 分K 提早提醒） =================
 // 回測 9/2～10/21 微台：60 分K 回測前低且收盤守住，之後先漲 1.5 ATR 的比例 79～87%（隨機價位 50～64%）；30 分K 75～84%（隨機 66～74%）
@@ -479,6 +479,7 @@ function sniperPost_(body) {
   notify_('⭐ 雙重確認成立｜' + (side > 0 ? '多單' : '空單') + ' ' + fmt_(f.px), [
     '傑哥帶狀 ' + Utilities.formatDate(new Date(f.t), 'Asia/Taipei', 'HH:mm') + ' 翻' + (side > 0 ? '多' : '空') + '（' + fmt_(f.px) + '），狙擊隨後同向',
     '🛡 移動停利 ' + TRAIL + ' 點（停損 ' + fmt_(f.px - side * TRAIL) + '）',
+    targetLine_(side, f.px, null, f.t),
     ce === side ? '✅ 順主開關' : '⚠️ 逆主開關，雙重確認也建議小量',
   ].join('\n'), 'star', 5);
 }
@@ -571,4 +572,60 @@ function testRoll() {
   const old = (ce.bars || []).filter(b => frontAt_(b.t) !== cur).pop();
   console.log('近月 ' + cur + '｜已處理到 ' + p.getProperty('contract') + '｜已平移 ' + p.getProperty('rollSp') +
     '｜舊合約最後一根 60 分K ' + (old ? Utilities.formatDate(new Date(old.t), 'Asia/Taipei', 'MM/dd HH:mm') + ' 收 ' + old.c : '無'));
+}
+
+
+// ================= 參考目標：六層點位（日）的下一階、下下階 =================
+// 跟 App「葵哥」分頁的六層一樣：日＝前一晚夜盤＋當天日盤；週＝週三結算後；月＝第三個週三結算後。高低被突破就跟著擴大。
+const SIX_MODE = 'D';
+const SIX_R = [0.382, 0.618, 0.786, 1, 1.272, 1.618];
+function ymdOf_(ms) { return Utilities.formatDate(new Date(ms), 'UTC', 'yyyyMMdd'); }
+function sixAnchor_(mode, tdMs) {
+  if (mode === 'D') return ymdOf_(tdMs - 24 * H);
+  if (mode === 'W') { const back = (new Date(tdMs).getUTCDay() - 3 + 7) % 7 || 7; return ymdOf_(tdMs - back * 24 * H); }
+  const ym = ym_(tdMs), tw = thirdWedOf_(ym);
+  if (tdMs > tw) return ymdOf_(tw);
+  return ymdOf_(thirdWedOf_(ym % 100 === 1 ? ym - 89 : ym - 1));
+}
+function sixSummaries_() {
+  const cache = CacheService.getScriptCache(), hit = cache.get('sixSum');
+  if (hit) return JSON.parse(hit);
+  const res = UrlFetchApp.fetch(APP_URL + 'data/bundle.json?t=' + Date.now(), { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) return [];
+  const rows = (JSON.parse(res.getContentText()).summaries || []).slice(-60).map(x => ({ td: x.td, type: x.type, h: x.h, l: x.l }));
+  cache.put('sixSum', JSON.stringify(rows), 600);
+  return rows;
+}
+/** 回傳 { mode, hi, lo, t: [下一階, 下下階] }；at＝訊號時間（毫秒），d＝Yahoo 分K（算這一盤到訊號為止的高低） */
+function sixTargets_(dir, px, d, at) {
+  const tdMs = tdAt_(at), td = ymdOf_(tdMs);
+  const m = new Date(at + 8 * H).getUTCHours() * 60 + new Date(at + 8 * H).getUTCMinutes();
+  const type = m >= 15 * 60 || m < 5 * 60 + 5 ? 'N' : 'D';
+  let hi = px, lo = px;
+  if (d && d.timestamp) {
+    const q = d.indicators.quote[0], s0 = sessionStartOf_(at - 60000);
+    d.timestamp.forEach((t, i) => {
+      const ms = fixYahoo_(t * 1000 - 60000);
+      if (q.high[i] == null || ms < s0 || ms >= at) return;
+      hi = Math.max(hi, q.high[i]); lo = Math.min(lo, q.low[i]);
+    });
+  }
+  const anchor = sixAnchor_(SIX_MODE, tdMs);
+  sixSummaries_().forEach(x => {
+    if (x.td <= anchor || x.td > td || (x.td === td && x.type === type)) return;
+    hi = Math.max(hi, x.h); lo = Math.min(lo, x.l);
+  });
+  if (!(hi > lo)) return null;
+  const mid = (hi + lo) / 2, half = hi - mid;
+  const lv = [mid].concat(SIX_R.map(r => mid + half * r), SIX_R.map(r => mid - half * r)).map(Math.round).sort((a, b) => a - b);
+  const t = dir > 0 ? lv.filter(v => v > px + 1) : lv.filter(v => v < px - 1).reverse();
+  return { mode: SIX_MODE, hi: hi, lo: lo, t: t.slice(0, 2) };
+}
+function targetLine_(dir, px, d, at) {
+  let r = null;
+  try { r = sixTargets_(dir, px, d, at); } catch (err) { console.warn('六層目標失敗：' + err); }
+  const pts = v => (v - px > 0 ? '+' : '−') + Math.abs(Math.round(v - px));
+  if (!r || !r.t.length) return '🎯 參考目標 ' + fmt_(px + dir * TP1) + '（' + pts(px + dir * TP1) + '）／' + fmt_(px + dir * TP2) + '（' + pts(px + dir * TP2) + '）';
+  const name = { D: '日', W: '週', M: '月' }[r.mode];
+  return '🎯 六層目標（' + name + '）' + r.t.map(v => fmt_(v) + '（' + pts(v) + '）').join('／') + (r.t.length < 2 ? '，再上去看移動停利' : '');
 }

@@ -558,6 +558,22 @@ function sixCard(c) {
     <p class="note">多空中軸＝（高＋低）÷2；多方＝中軸＋距離×倍率，空方＝中軸−距離×倍率；倍率 0.382／0.618／0.786／1／1.272／1.618。結算日照「週三」「第三個週三」計算，遇到休市順延的那次會差一天。高低用台指期近月（微台同價）。沒有回測驗證，當區間規劃參考。</p>
   </section>`;
 }
+/** 進場參考目標：六層點位（目前選的日／週／月）在進場價之後的下一階、下下階 */
+function sixTargets(c, dir, entry) {
+  const r = sixPeriod(c, sixMode());
+  if (!r?.L || !dir || entry == null) return null;
+  const lv = [...r.L.dn, r.L.mid, ...r.L.up].map(Math.round).sort((a, b) => a - b);
+  const t = dir > 0 ? lv.filter(v => v > entry + 1) : lv.filter(v => v < entry - 1).reverse();
+  return { mode: r.mode, t: t.slice(0, 2) };
+}
+function sixTargetHtml(c, dir, entry) {
+  const cls = dir > 0 ? "t-up" : "t-down";
+  const r = sixTargets(c, dir, entry);
+  if (!r?.t.length) return `參考目標 +20 <b class="${cls}">${fmt(entry + dir * 20)}</b>、+80 <b class="${cls}">${fmt(entry + dir * 80)}</b>`;
+  const hit = v => c.price != null && (dir > 0 ? c.price >= v : c.price <= v);
+  return `🎯 六層目標（${SIX_NAME[r.mode]}）${r.t.map(v => `<b class="${cls}">${fmt(v)}</b>（${signed(v - entry)}${hit(v) ? "，已到" : ""}）`).join("、")}${r.t.length < 2 ? "，再上去看移動停利" : ""}`;
+}
+
 /** 刀神首頁用：日／週／月 各自的中軸與上下第 5 層 */
 function sixMini(c) {
   const rows = SIX_PERIODS.map(([m, label]) => ({ label, r: sixPeriod(c, m) })).filter(x => x.r?.L);
@@ -727,7 +743,7 @@ function zsCard(c) {
     <h2>傑哥戰神帶狀（5 分K，近似）</h2>
     <div class="verdict"><span class="side">${z.dir > 0 ? "偏多" : z.dir < 0 ? "偏空" : "未定"}</span><span class="mode">${z.since ? `${fmtDateTime(z.since)} 翻向` : ""}</span></div>
     ${posBadge(z.dir, z.flipPrice, px)}
-    ${z.dir && z.flipPrice != null ? `<p class="say">🛡 智慧單：移動停利 180 點（初始停損 <b>${fmt(z.flipPrice - z.dir * 180)}</b>）｜參考目標 +20 <b class="${z.dir > 0 ? "t-up" : "t-down"}">${fmt(z.flipPrice + z.dir * 20)}</b>、+80 <b class="${z.dir > 0 ? "t-up" : "t-down"}">${fmt(z.flipPrice + z.dir * 80)}</b>${c.my?.ce ? (c.my.ce.dir === z.dir ? "｜✅ 順主開關" : "｜⚠️ 逆主開關，回測勝率低，建議不做") : ""}</p>` : ""}
+    ${z.dir && z.flipPrice != null ? `<p class="say">🛡 智慧單：移動停利 180 點（初始停損 <b>${fmt(z.flipPrice - z.dir * 180)}</b>）｜${sixTargetHtml(c, z.dir, z.flipPrice)}${c.my?.ce ? (c.my.ce.dir === z.dir ? "｜✅ 順主開關" : "｜⚠️ 逆主開關，回測勝率低，建議不做") : ""}</p>` : ""}
     <div class="dash">
       <div><span>上軌</span><b>${fmt(z.up)}</b></div><div><span>中軌</span><b>${fmt(z.mid)}</b></div>
       <div><span>下軌</span><b>${fmt(z.lo)}</b></div><div><span>現價</span><b>${fmt(px)}｜${pos}</b></div>
