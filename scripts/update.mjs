@@ -8,11 +8,11 @@ import { createHash } from "node:crypto";
 import { fetchBuffer, taifexDailyZipUrl, fetchFutDataDown, fetchYahooChart, decodeBig5, fetchPcr, fetchFearGreed } from "./lib/sources.mjs";
 import { swordStudy } from "../engine/sword.js";
 import { yahooToRecords as yahooToRecordsShared } from "../engine/yahoo.js";
-import { parseDailyCsv, buildCalendar, expiryOverrides, contractDataset, bars15Of, tmfContinuous } from "./lib/dataset.mjs";
+import { parseDailyCsv, buildCalendar, expiryOverrides, contractDataset, bars15Of, tmfContinuous, rollSpread } from "./lib/dataset.mjs";
 import { buildBars15 } from "../engine/bars.js";
 import { proSniper, tradeSummary } from "../engine/myind.js";
 import { ticksToSessions } from "../engine/bars.js";
-import { classifyTick, sessionAt, sessionStartMs, sessionEndMs, frontContract, nextTradingDate, prevTradingDate, SESSION, sessionKey, slotsOf } from "../engine/sessions.js";
+import { classifyTick, sessionAt, sessionStartMs, sessionEndMs, frontContract, nextMonth, thirdWednesday, nextTradingDate, prevTradingDate, SESSION, sessionKey, slotsOf } from "../engine/sessions.js";
 import { tpeParts, tpeMs, addDays, weekdayOf } from "../engine/time.js";
 import { intradayTouchStudy, sessionCloseStudy } from "../engine/backtest.js";
 import { analyzeStructure } from "../engine/structure.js";
@@ -54,7 +54,9 @@ async function updateDaily() {
     const isRecent = ym >= monthsBack(2).at(-1);
     const last = meta.dailyFetched[ym] ?? 0;
     // 舊月份抓一次就好；本月與上月每 2 小時最多抓一次
-    if (existsSync(file) && (!isRecent || NOW - last < 2 * 3600_000)) continue;
+    // 結算日收盤後要馬上拿到兩個合約的收盤價（算換月價差）
+    const settleDay = today === thirdWednesday(today.slice(0, 6)) && ym === today.slice(0, 6) && NOW > tpeMsOf(today, 14 * 60) && last < tpeMsOf(today, 14 * 60);
+    if (existsSync(file) && !settleDay && (!isRecent || NOW - last < 2 * 3600_000)) continue;
     const y = ym.slice(0, 4), m = ym.slice(4, 6);
     const endDay = ym === today.slice(0, 6) ? today.slice(6, 8) : String(new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate()).padStart(2, "0");
     try {
@@ -285,10 +287,25 @@ function buildBundle(all, stats, live) {
     }
   }
   const plans = list(p("plans")).sort().slice(-30).map(f => readJson(p("plans", f)));
+  // 換月：結算日（每月第三個週三）前一週起，先把次月合約的資料一起送給手機；
+  // 手機看到即時行情已經是次月（結算日 13:45 之後的夜盤）就自己切過去，不必等這支程式下一次跑。
+  const expiryOf = c => all.expiry[c] ?? thirdWednesday(c);
+  const nextC = nextMonth(contract);
+  let next = null;
+  if (addDays(today, 7) >= expiryOf(contract)) {
+    const dsN = contractDataset(nextC, { ...all, provisional: [], nowMs: NOW });
+    const sp = rollSpread(all.dailyRows, contract, nextC);
+    if (dsN.summaries.length && sp) next = { contract: nextC, sessions15: dsN.sessions15.filter(s => s.td >= keepFrom), summaries: dsN.summaries.slice(-400), spread: sp.spread, spreadTd: sp.td };
+  }
+  const prevC = (() => { const y = Number(contract.slice(0, 4)), m = Number(contract.slice(4, 6)) - 1; return m ? `${y}${String(m).padStart(2, "0")}` : `${y - 1}12`; })();
+  const rollInfo = addDays(expiryOf(prevC), 7) >= today ? rollSpread(all.dailyRows, prevC, contract) : null;
   const officialThrough = ds.sessions15.filter(s => s.source === "official").at(-1);
   return {
     builtAt: NOW,
     contract,
+    expiry: expiryOf(contract),
+    next,
+    roll: rollInfo,
     target: { ...target, td, key: targetKey },
     calendarTail: all.calendar.slice(-10),
     sessions15, summaries,
@@ -299,7 +316,7 @@ function buildBundle(all, stats, live) {
       provisional: sessions15.filter(s => s.source === "yahoo").map(s => sessionKey(s.start, s.type)),
     },
     stats: stats && { intraday: stats.intraday, session: stats.session, sword: stats.sword, sniper: stats.sniper, coverage: stats.coverage, computedAt: stats.computedAt },
-    tmf5: tmfContinuous([...all.tmfRecords, ...(live?.tmf?.sessions ?? [])], all).filter(r => r.td >= (all.calendar.at(-12) ?? "0")),
+    tmf5: tmfContinuous([...all.tmfRecords, ...(live?.tmf?.sessions ?? [])], all, contract).filter(r => r.td >= (all.calendar.at(-12) ?? "0")),
     tmfLive: live?.tmf ? { lastBarTime: live.tmf.lastBarTime, lastPrice: live.tmf.lastPrice } : null,
     pcr: readJson(p("pcr.json")),
     fng: readJson(p("fng.json")),

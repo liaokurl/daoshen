@@ -38,3 +38,21 @@ test("即時資料取代暫存盤，但不動官方資料，摘要也跟著更�
   assert.equal(B.live.lastPrice, 46545);
   assert.equal(B.tmf5.length, 1);
 });
+
+test("換月：結算日夜盤進來時切到次月合約，微台歷史平移價差，舊合約那盤也平移", () => {
+  // 10/21（週三結算）15:00 夜盤 → 交易日 10/22，屬 202611
+  const night = Date.UTC(2026, 9, 21, 7, 0);
+  const B = {
+    contract: "202610", expiry: "20261021", calendarTail: ["20261020", "20261021"],
+    next: { contract: "202611", spread: -30, spreadTd: "20261021", sessions15: [{ start: "20261021", type: "D", td: "20261021", source: "official", complete: true, bars: [[100, 100, 100, 100, 1]] }], summaries: [{ td: "20261021", type: "D", start: "20261021", o: 1, h: 2, l: 0, c: 1, complete: true }] },
+    sessions15: [{ start: "20261021", type: "D", td: "20261021", source: "yahoo", complete: true, bars: [[130, 130, 130, 130, 1]] }],
+    summaries: [],
+    tmf5: [{ start: "20261021", type: "D", td: "20261021", source: "yahoo-tmf", contract: "202610", adjusted: 0, complete: true, bars: [[1000, 1001, 999, 1000, 1]] }],
+  };
+  applyLive(B, { kind: "bars", WTX: fakeYahoo(night, 20, 970), WTM: fakeYahoo(night, 20, 970) }, night + 21 * 60000);
+  assert.equal(B.contract, "202611");
+  assert.equal(B.sessions15[0].bars[0][0], 100);           // 換成次月的 15 分K
+  assert.equal(B.tmf5[0].bars[0][0], 970);                 // 舊合約 1000 − 30
+  assert.equal(B.tmf5.at(-1).bars[0][0], 970);             // 新合約夜盤原價
+  assert.equal(B.roll.spread, -30);
+});

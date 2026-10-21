@@ -97,7 +97,21 @@ export function bars15Of(ds, opts) {
  * 微台 5 分K 連續序列（跟 TradingView TMF1! B-ADJ 一樣：換月時把舊合約往新合約價位平移）。
  * tmfRecords: 各檔案的 tmf5 紀錄（多合約）＋ Yahoo 暫存（近月）
  */
-export function tmfContinuous(tmfRecords, { calendar, expiry }) {
+/** 換月價差（新合約 − 舊合約）：取兩個合約都有日盤收盤的最近一天（期交所日行情） */
+export function rollSpread(dailyRows, from, to) {
+  const byTd = new Map();
+  for (const r of dailyRows ?? []) {
+    if (r.type !== "D" || (r.contract !== from && r.contract !== to)) continue;
+    if (!byTd.has(r.td)) byTd.set(r.td, {});
+    byTd.get(r.td)[r.contract] = r.c;
+  }
+  const tds = [...byTd.keys()].filter(td => byTd.get(td)[from] != null && byTd.get(td)[to] != null).sort();
+  if (!tds.length) return null;
+  const td = tds.at(-1), x = byTd.get(td);
+  return { from, to, td, spread: x[to] - x[from], fromClose: x[from], toClose: x[to] };
+}
+
+export function tmfContinuous(tmfRecords, { calendar, expiry, dailyRows = [] }, toContract = null) {
   const byKey = new Map(); // key -> Map(contract -> rec)
   for (const r of tmfRecords) {
     const key = sessionKey(r.start, r.type);
@@ -109,7 +123,8 @@ export function tmfContinuous(tmfRecords, { calendar, expiry }) {
   }
   const keys = [...byKey.keys()].sort((a, b) => sessionStartMs(a.slice(0, 8), a.slice(8)) - sessionStartMs(b.slice(0, 8), b.slice(8)));
   const out = [];
-  let offset = 0, nextFront = null;
+  // toContract：整段序列要對齊到哪個合約（換月後網站資料改用新合約，但新合約的盤可能還沒進來）
+  let offset = 0, nextFront = toContract;
   for (let i = keys.length - 1; i >= 0; i -= 1) {
     const key = keys[i], start = key.slice(0, 8), type = key.slice(8);
     const td = tdOf(start, type, calendar);
@@ -118,9 +133,15 @@ export function tmfContinuous(tmfRecords, { calendar, expiry }) {
     const rec = m.get(front) ?? [...m.values()].sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))[0];
     if (!rec) continue;
     if (nextFront && rec.contract !== nextFront) {
-      const newer = m.get(nextFront);
       const lastClose = x => x?.bars.filter(Boolean).at(-1)?.[3];
-      const diff = lastClose(newer) != null && lastClose(rec) != null ? lastClose(newer) - lastClose(rec) : 0;
+      // 換月那一盤兩個合約都有資料 → 直接用收盤差；沒有（例如結算日官方逐筆還沒出來）→ 往前找兩合約都有的一盤，再不行用日行情
+      let diff = null;
+      for (let k = i; k >= Math.max(0, i - 12) && diff == null; k -= 1) {
+        const mm = byKey.get(keys[k]);
+        const a = lastClose(mm.get(nextFront)), b = lastClose(mm.get(rec.contract));
+        if (a != null && b != null) diff = a - b;
+      }
+      if (diff == null) diff = rollSpread(dailyRows, rec.contract, nextFront)?.spread ?? 0;
       offset += diff;
     }
     nextFront = rec.contract;

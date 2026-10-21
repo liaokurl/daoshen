@@ -105,6 +105,7 @@ function monitor() {
     const d = chartData_('WTM&');
     if (d.error) return;
     const props = PropertiesService.getScriptProperties();
+    try { rollFix_(props); } catch (err) { console.warn('換月處理失敗：' + err); }
     const st = JSON.parse(props.getProperty('zs') || '{"bars":[],"dir":0,"pend":0,"cnt":0,"lastT":0}');
     // 1 分K → 5 分K（Yahoo 時間是分鐘結束）
     const ts = d.timestamp || [], q = d.indicators.quote[0];
@@ -480,4 +481,62 @@ function sniperPost_(body) {
     '🛡 移動停利 ' + TRAIL + ' 點（停損 ' + fmt_(f.px - side * TRAIL) + '）',
     ce === side ? '✅ 順主開關' : '⚠️ 逆主開關，雙重確認也建議小量',
   ].join('\n'), 'star', 5);
+}
+
+
+// ================= 換月：每月第三個週三 13:45 結算後，Yahoo「近一」換成次月合約 =================
+// 存著的 5 分K／30 分K／60 分K 都還是舊合約價位，要整段平移「新−舊」價差，不然會出現假突破、假翻向。
+// 價差從 App 網站的 bundle.json 拿（GitHub 用期交所兩個合約的日盤收盤算好）。
+function tdAt_(ms) {   // 這個時間點屬於哪個交易日（夜盤算下一個交易日；不管國定假日）
+  const t = new Date(ms + 8 * H), m = t.getUTCHours() * 60 + t.getUTCMinutes();
+  let d = Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate());
+  if (m >= 15 * 60) d += 24 * H;
+  let wd = new Date(d).getUTCDay();
+  while (wd === 0 || wd === 6) { d += 24 * H; wd = new Date(d).getUTCDay(); }
+  return d;
+}
+function ym_(d) { const x = new Date(d); return x.getUTCFullYear() * 100 + x.getUTCMonth() + 1; }
+function thirdWedOf_(ym) {
+  const y = Math.floor(ym / 100), mo = ym % 100 - 1, first = Date.UTC(y, mo, 1);
+  return first + (((3 - new Date(first).getUTCDay() + 7) % 7) + 14) * 24 * H;
+}
+function frontAt_(ms) {
+  const td = tdAt_(ms); let ym = ym_(td);
+  if (td > thirdWedOf_(ym)) ym = ym % 100 === 12 ? ym + 89 : ym + 1;
+  return String(ym);
+}
+function rollFix_(props) {
+  const cur = frontAt_(Date.now());
+  if (props.getProperty('contract') === cur) return;
+  const keys = ['zs', 'ce', 'h30'];
+  const states = {}; let stale = false;
+  keys.forEach(k => {
+    const st = JSON.parse(props.getProperty(k) || 'null');
+    states[k] = st;
+    if (st && st.bars && st.bars.some(b => frontAt_(b.t) !== cur)) stale = true;
+  });
+  if (!stale) { props.setProperty('contract', cur); return; }
+  const res = UrlFetchApp.fetch(APP_URL + 'data/bundle.json?t=' + Date.now(), { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) return;
+  const B = JSON.parse(res.getContentText());
+  const sp = B.next && B.next.contract === cur ? B.next.spread : B.roll && B.roll.to === cur ? B.roll.spread : null;
+  if (sp == null) return;   // 網站還沒算出價差，下一分鐘再試
+  keys.forEach(k => {
+    const st = states[k];
+    if (!st || !st.bars) return;
+    st.bars = st.bars.map(b => frontAt_(b.t) === cur ? b : Object.assign({}, b, { h: b.h + sp, l: b.l + sp, c: b.c + sp, o: b.o == null ? b.o : b.o + sp }));
+    if (k === 'ce' && st.bars.length > CE_N) st.dir = chandelier_(st.bars).dir;   // 重算主開關，不推播
+    props.setProperty(k, JSON.stringify(st));
+  });
+  const f = JSON.parse(props.getProperty('zsFlip') || 'null');
+  if (f && frontAt_(f.t) !== cur) { f.px += sp; props.setProperty('zsFlip', JSON.stringify(f)); }
+  props.setProperty('contract', cur);
+  notify_('📅 期貨換月｜' + cur.slice(4) + ' 月合約',
+    '近月改成 ' + cur.slice(0, 4) + '/' + cur.slice(4) + '，換月價差 ' + (sp > 0 ? '+' : '') + sp + ' 點\n傑哥帶狀、60 分K 主開關、前低點位都已平移到新合約價位', 'calendar', 3);
+}
+
+/** 在編輯器執行：看現在判斷的近月合約與換月狀態 */
+function testRoll() {
+  const p = PropertiesService.getScriptProperties();
+  console.log('近月 ' + frontAt_(Date.now()) + '｜已處理到 ' + p.getProperty('contract'));
 }

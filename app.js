@@ -238,6 +238,7 @@ function quoteCard(c) {
     `<span class="chip">TX ${B.contract.slice(0, 4)}/${B.contract.slice(4)}（微台同價）</span>`,
     `<span class="chip ${liveNow ? "ok" : ""}">${liveNow ? "盤中" : "休市中"}｜${sessionLabel(B.target)}</span>`,
     B.status.provisional.length ? `<span class="chip warn">含 Yahoo 暫存 K 棒</span>` : "",
+    B.roll ? `<span class="chip warn">已換月 ${B.roll.from.slice(4)}→${B.roll.to.slice(4)}月｜價差 ${signed(B.roll.spread)}（歷史已平移）</span>` : "",
   ].join("");
   return `<section class="card quote">
     <div class="quote-row"><span class="big">${fmt(price)}</span><span class="chg ${chg > 0 ? "up" : chg < 0 ? "down" : ""}">${signed(chg)}</span><span class="meta">${esc(chgLabel)}</span></div>
