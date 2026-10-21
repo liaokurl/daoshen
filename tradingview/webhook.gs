@@ -507,7 +507,7 @@ function frontAt_(ms) {
 }
 function rollFix_(props) {
   const cur = frontAt_(Date.now());
-  if (props.getProperty('contract') === cur) return;
+  if (props.getProperty('contract') === cur) { rollRefine_(props, cur); return; }
   const keys = ['zs', 'ce', 'h30'];
   const states = {}; let stale = false;
   keys.forEach(k => {
@@ -531,12 +531,44 @@ function rollFix_(props) {
   const f = JSON.parse(props.getProperty('zsFlip') || 'null');
   if (f && frontAt_(f.t) !== cur) { f.px += sp; props.setProperty('zsFlip', JSON.stringify(f)); }
   props.setProperty('contract', cur);
+  props.setProperty('rollSp', String(sp));
   notify_('📅 期貨換月｜' + cur.slice(4) + ' 月合約',
     '近月改成 ' + cur.slice(0, 4) + '/' + cur.slice(4) + '，換月價差 ' + (sp > 0 ? '+' : '') + sp + ' 點\n傑哥帶狀、60 分K 主開關、前低點位都已平移到新合約價位', 'calendar', 3);
+}
+
+/** 換月後 3 天內每 15 分鐘：拿網站已平移好的 60 分K 跟自己存的舊合約 K 棒比，有差就補平移（網站價差算得更準時會自動修正） */
+function rollRefine_(props, cur) {
+  const now = Date.now(), last = Number(props.getProperty('rollChk') || 0);
+  if (now - last < 15 * 60000) return;
+  const ce = JSON.parse(props.getProperty('ce') || 'null');
+  if (!ce || !ce.bars || !ce.bars.some(b => frontAt_(b.t) !== cur)) return;
+  props.setProperty('rollChk', String(now));
+  const B = JSON.parse(UrlFetchApp.fetch(APP_URL + 'data/bundle.json?t=' + now, { muteHttpExceptions: true }).getContentText() || '{}');
+  if (!B.roll || B.roll.to !== cur || B.contract !== cur) return;
+  const ref = {};
+  ceSeedBars_((B.tmf5 || []).filter(r => r.complete !== false)).forEach(x => { ref[x.t] = x.c; });
+  const diffs = ce.bars.filter(x => frontAt_(x.t) !== cur && ref[x.t] != null).map(x => ref[x.t] - x.c).sort((p, q) => p - q);
+  if (diffs.length < 5) return;
+  const delta = diffs[Math.floor(diffs.length / 2)];
+  if (Math.abs(delta) < 3) return;   // Yahoo 跟官方資料本來就會差一兩點
+  ['zs', 'ce', 'h30'].forEach(k => {
+    const st = JSON.parse(props.getProperty(k) || 'null');
+    if (!st || !st.bars) return;
+    st.bars = st.bars.map(x => frontAt_(x.t) === cur ? x : Object.assign({}, x, { h: x.h + delta, l: x.l + delta, c: x.c + delta, o: x.o == null ? x.o : x.o + delta }));
+    if (k === 'ce' && st.bars.length > CE_N) st.dir = chandelier_(st.bars).dir;
+    props.setProperty(k, JSON.stringify(st));
+  });
+  const f = JSON.parse(props.getProperty('zsFlip') || 'null');
+  if (f && frontAt_(f.t) !== cur) { f.px += delta; props.setProperty('zsFlip', JSON.stringify(f)); }
+  props.setProperty('rollSp', String(Number(props.getProperty('rollSp') || 0) + delta));
+  console.log('換月價差補正 ' + delta);
 }
 
 /** 在編輯器執行：看現在判斷的近月合約與換月狀態 */
 function testRoll() {
   const p = PropertiesService.getScriptProperties();
-  console.log('近月 ' + frontAt_(Date.now()) + '｜已處理到 ' + p.getProperty('contract'));
+  const cur = frontAt_(Date.now()), ce = JSON.parse(p.getProperty('ce') || '{}');
+  const old = (ce.bars || []).filter(b => frontAt_(b.t) !== cur).pop();
+  console.log('近月 ' + cur + '｜已處理到 ' + p.getProperty('contract') + '｜已平移 ' + p.getProperty('rollSp') +
+    '｜舊合約最後一根 60 分K ' + (old ? Utilities.formatDate(new Date(old.t), 'Asia/Taipei', 'MM/dd HH:mm') + ' 收 ' + old.c : '無'));
 }
