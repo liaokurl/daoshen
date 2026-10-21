@@ -16,8 +16,10 @@ function doPost(e) {
   if (!e || !e.parameter || e.parameter.key !== KEY) return ContentService.createTextOutput('forbidden');
   const body = e.postData ? e.postData.contents : '';
   sheet_().appendRow([new Date(), body]);
+  try { sniperPost_(body); } catch (err) { console.warn('狙擊快訊處理失敗：' + err); }
   // TradingView 快訊（狙擊、傑哥…）也轉寄 Email；取樣器的資料不寄
-  if (body && body.indexOf('戰神通道') < 0) notify_('TradingView 快訊｜' + body.slice(0, 60), body, 'bell', 4);
+  // 狙擊快訊只拿來做「雙重確認」，不另外轉發，避免通知太多
+  if (body && body.indexOf('戰神通道') < 0 && !sniperSide_(body) && !/狙擊|Sniper/.test(body)) notify_('TradingView 快訊｜' + body.slice(0, 60), body, 'bell', 4);
   return ContentService.createTextOutput('ok');
 }
 
@@ -137,6 +139,7 @@ function monitor() {
       if (st.pend && st.cnt >= 2) {
         const was = st.dir;
         st.dir = st.pend; st.pend = 0; st.cnt = 0;
+        props.setProperty('zsFlip', JSON.stringify({ t: b.t + 300000, side: st.dir, px: b.c, ce: (JSON.parse(props.getProperty('ce') || '{}').dir || 0) }));
         if (!first) notify_(entryTitle_(st.dir, b.c), entryBody_(st.dir, b.c, timeTxt, up, lo, props), st.dir > 0 ? 'red_circle' : 'green_circle', 5);
       } else if (!first && NOTIFY_WARN && st.pend && st.cnt === 1) {
         notify_(`預警｜帶狀可能翻${st.pend > 0 ? '多' : '空'}`, `${timeTxt} 第 1 根收在帶狀${st.pend > 0 ? '上方' : '下方'}，再 1 根就翻向\n微台 ${fmt_(b.c)}`, 'warning', 3);
@@ -360,6 +363,7 @@ function entryBody_(dir, px, timeTxt, up, lo, props) {
     '🛡 智慧單：移動停利 ' + TRAIL + ' 點（初始停損 ' + fmt_(px - dir * TRAIL) + '）',
     '🎯 參考目標 ' + fmt_(px + dir * TP1) + '（' + (dir > 0 ? '+' : '−') + TP1+ '）／' + fmt_(px + dir * TP2) + '（' + (dir > 0 ? '+' : '−') + TP2 + '）',
     (with_ ? '✅ 順主開關（60 分K 吊燈＝' : '⚠️ 逆主開關（60 分K 吊燈＝') + (ce > 0 ? '多' : ce < 0 ? '空' : '未定') + '）' + (with_ ? '' : '，回測逆勢這側勝率低，建議不做'),
+    dualLine_(dir, props),
     '',
     '戰神帶狀 5 分K｜' + timeTxt + ' 收盤確認',
     '上軌 ' + fmt_(up) + '／下軌 ' + fmt_(lo),
@@ -440,4 +444,40 @@ function h30Update_(d, props) {
   st.bars = bars; st.lastT = bars[bars.length - 1].t;
   props.setProperty('h30', JSON.stringify(st));
   swingNotify_(bars, 30, props);
+}
+
+// ================= 雙重確認：狙擊（TradingView 快訊）＋傑哥帶狀，3 根 5 分K 內同方向 =================
+// 回測 9/2～10/21：雙重確認＋順主開關，勝率約 44%、每天約 1.4 次（只看帶狀＋主開關是 37%）
+const DUAL_MS = 3 * 5 * 60000 + 2 * 60000;   // 3 根 5 分K（多留 2 分鐘給快訊延遲）
+
+function sniperSide_(text) {
+  const t = String(text || '');
+  if (/停利|出場|平倉/.test(t)) return 0;
+  if (/(狙擊|Sniper)[^空]*多|LONG/i.test(t)) return 1;
+  if (/(狙擊|Sniper)[^多]*空|SHORT/i.test(t)) return -1;
+  return 0;
+}
+
+/** 進場訊息裡加一行：最近 3 根內有沒有同方向的狙擊 */
+function dualLine_(dir, props) {
+  const sn = JSON.parse(props.getProperty('snipe') || 'null');
+  if (sn && sn.side === dir && Date.now() - sn.t <= DUAL_MS) return '⭐ 雙重確認：狙擊' + (dir > 0 ? '多' : '空') + '已在 ' + Utilities.formatDate(new Date(sn.t), 'Asia/Taipei', 'HH:mm') + ' 出現（回測勝率較高，可加碼）';
+  return '☆ 尚未雙重確認（狙擊還沒同向，3 根 K 內出現會再通知）';
+}
+
+/** 收到 TradingView 狙擊快訊：記下來；如果傑哥剛翻同方向（3 根內），補一則「雙重確認成立」 */
+function sniperPost_(body) {
+  const side = sniperSide_(body); if (!side) return;
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('snipe', JSON.stringify({ t: Date.now(), side: side }));
+  const f = JSON.parse(props.getProperty('zsFlip') || 'null');
+  if (!f || f.side !== side || Date.now() - f.t > DUAL_MS) return;
+  if (props.getProperty('dualSent') === String(f.t)) return;
+  props.setProperty('dualSent', String(f.t));
+  const ce = JSON.parse(props.getProperty('ce') || '{}').dir || 0;
+  notify_('⭐ 雙重確認成立｜' + (side > 0 ? '多單' : '空單') + ' ' + fmt_(f.px), [
+    '傑哥帶狀 ' + Utilities.formatDate(new Date(f.t), 'Asia/Taipei', 'HH:mm') + ' 翻' + (side > 0 ? '多' : '空') + '（' + fmt_(f.px) + '），狙擊隨後同向',
+    '🛡 移動停利 ' + TRAIL + ' 點（停損 ' + fmt_(f.px - side * TRAIL) + '）',
+    ce === side ? '✅ 順主開關' : '⚠️ 逆主開關，雙重確認也建議小量',
+  ].join('\n'), 'star', 5);
 }

@@ -683,7 +683,8 @@ function sniperFlat(c, d) {
 }
 
 /** 每次翻向的損益：翻向價進場，下一次翻向價出場；最後一筆用現價算浮動損益（每筆扣 0 點，未含手續費） */
-function flipTable(flips, px) {
+function flipTable(flips, px, snipes = []) {
+  const dual = f => snipes.some(s => (s.type === "LONG" ? 1 : s.type === "SHORT" ? -1 : 0) === f.side && Math.abs(s.t - f.t) <= 15 * 60000);
   if (!flips?.length) return `<p class="note">最近還沒有翻向紀錄。</p>`;
   const rows = flips.map((f, i) => {
     const exit = flips[i + 1]?.price ?? px;
@@ -694,12 +695,13 @@ function flipTable(flips, px) {
   const tot = closed.reduce((a, r) => a + r.pnl, 0), win = closed.filter(r => r.pnl > 0).length;
   const tone = v => (v > 0 ? "t-up" : v < 0 ? "t-down" : "");
   const all = rows.slice().reverse(), first = all.slice(0, 5), rest = all.slice(5);
-  const row = r => `<div class="fr${r.open ? " open" : ""}"><span>${fmtDateTime(r.t)}</span><span class="${r.side > 0 ? "t-up" : "t-down"}">${r.side > 0 ? "翻多" : "翻空"} ${fmt(r.price)}</span><b class="${tone(r.pnl)}">${r.pnl == null ? "—" : `${signed(r.pnl)} 點`}${r.open ? "<small>持有中</small>" : ""}</b></div>`;
+  const row = r => `<div class="fr${r.open ? " open" : ""}"><span>${fmtDateTime(r.t)}</span><span class="${r.side > 0 ? "t-up" : "t-down"}">${dual(r) ? "⭐" : ""}${r.side > 0 ? "翻多" : "翻空"} ${fmt(r.price)}</span><b class="${tone(r.pnl)}">${r.pnl == null ? "—" : `${signed(r.pnl)} 點`}${r.open ? "<small>持有中</small>" : ""}</b></div>`;
   return `<div class="flips">
     ${first.map(row).join("")}
     ${rest.length ? `<details class="more-flips" id="more-flips"${state.flipsOpen ? " open" : ""}><summary>${state.flipsOpen ? "收起" : `顯示其他 ${rest.length} 筆`}</summary><div class="flips">${rest.map(row).join("")}</div></details>` : ""}
     ${closed.length ? `<div class="fr sum"><span>已結算 ${closed.length} 筆</span><span>勝率 ${Math.round(win / closed.length * 100)}%</span><b class="${tone(tot)}">${signed(tot)} 點</b></div>` : ""}
   </div>
+  ${(() => { const d = closed.filter(dual); if (!d.length) return ""; const t = d.reduce((a, r) => a + r.pnl, 0), w = d.filter(r => r.pnl > 0).length; return `<p class="note">⭐ 雙重確認（狙擊 3 根內同向）：${d.length} 筆，勝率 ${Math.round(w / d.length * 100)}%，合計 <b class="${tone(t)}">${signed(t)} 點</b></p>`; })()}
   <p class="note">每筆＝在翻向價進場、下一次翻向價出場（反手），最上面一筆是目前持有中的浮動損益。統計範圍是 App 現有的近 12 個交易日 5 分K，沒扣手續費與滑價。</p>`;
 }
 
@@ -730,7 +732,7 @@ function zsCard(c) {
       <div><span>下軌</span><b>${fmt(z.lo)}</b></div><div><span>現價</span><b>${fmt(px)}｜${pos}</b></div>
     </div>
     <p class="say">${esc(flipNeed)}</p>
-    ${flipTable(z.flips, px)}
+    ${flipTable(z.flips, px, c.my?.sn?.signals)}
     <p class="note">帶狀公式由你的截圖反推（最高價 WMA24／收盤 WMA20／最低價 WMA24），跟原版差約 1～3 點。翻向規則「2 根 5 分K 收在帶狀另一側（中間沒有收回原方向那一側）」：對照傑哥 10/16、10/19 共 10 筆訊號，方向與筆數全部一致，時間多數相同或差 1 根，少數晚 2～5 根。</p>
   </section>`;
 }
