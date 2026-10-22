@@ -1,6 +1,7 @@
 // 六層多空點位：用一段期間的最高／最低算中軸與上下六層
 // 期間切法照使用者規則（都以日盤收盤 13:45 為界，夜盤算下一個交易日）：
-//   日＝一個交易日（前一晚夜盤＋當天日盤），盤中高低被突破就跟著擴大
+//   日＝前兩盤（現在日盤 → 前一天日盤＋昨晚夜盤；現在夜盤 → 今天日盤＋昨晚夜盤）的最高／最低，
+//       這一盤破高或破底就把新高／新低納入重算
 //   週＝「上一個完整的週」：上上個週三結算後～上個週三結算；這一週破高／破底就跟著擴大
 //   月＝「上一個完整的月」：上上個第三個週三結算後～上個第三個週三結算；這個月破高／破底就跟著擴大
 import { thirdWednesday } from "./sessions.js";
@@ -34,9 +35,24 @@ export function periodAnchor(mode, td) {
  * summaries: 各盤摘要（含 td、type、h、l；盤中那一盤也在裡面）
  * price: 現價；被突破時高低立即跟著改
  */
+const ord = s => s.td + (s.type === "N" ? "0" : "1");
+function dayRange(S, price) {
+  const sorted = [...S].sort((a, b) => ord(a).localeCompare(ord(b)));
+  const last = sorted.at(-1), live = last.complete === false;
+  const base = (live ? sorted.slice(0, -1) : sorted).slice(-2);
+  if (!base.length) return null;
+  let hi = Math.max(...base.map(s => s.h)), lo = Math.min(...base.map(s => s.l));
+  const baseHi = hi, baseLo = lo;
+  if (live) { hi = Math.max(hi, last.h); lo = Math.min(lo, last.l); }
+  if (price != null) { hi = Math.max(hi, price); lo = Math.min(lo, price); }
+  const tds = [...new Set(base.map(s => s.td))].sort();
+  return { mode: "D", hi, lo, from: tds[0], to: tds.at(-1), days: tds.length, sessions: base.length, base: base.map(s => ({ start: s.start ?? s.td, type: s.type })), live, broke: hi > baseHi || lo < baseLo, brokeHi: hi > baseHi, brokeLo: lo < baseLo, baseHi, baseLo, prev: false };
+}
+
 export function periodRange(summaries, mode, price = null) {
   const S = (summaries ?? []).filter(s => s.h != null && s.l != null && s.td);
   if (!S.length) return null;
+  if (mode === "D") return dayRange(S, price);
   const lastTd = S.reduce((a, s) => (s.td > a ? s.td : a), "");
   const anchor = periodAnchor(mode, lastTd);
   // 週、月：用上一個完整期間（結算日當天的日盤算在那一期）

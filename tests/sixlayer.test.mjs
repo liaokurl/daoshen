@@ -17,10 +17,19 @@ test("期間起點：週三結算、第三個週三月結算", () => {
   assert.equal(periodAnchor("M", "20261022"), "20261021");
 });
 
-test("高低被突破時跟著現價改", () => {
-  const S = [{ td: "20261019", type: "N", h: 100, l: 90 }, { td: "20261019", type: "D", h: 105, l: 92 }];
-  const r = periodRange(S, "D", 110);
-  assert.equal(r.hi, 110); assert.equal(r.lo, 90); assert.equal(r.broke, true);
+test("日：前一個日盤＋夜盤當基準，這一盤破底就納入", () => {
+  const S = [
+    { td: "20261021", type: "N", h: 999, l: 1, complete: true },         // 再前一盤，不算
+    { td: "20261021", type: "D", start: "20261021", h: 47450, l: 46872, complete: true },
+    { td: "20261022", type: "N", start: "20261021", h: 47555, l: 46983, complete: true },
+    { td: "20261022", type: "D", start: "20261022", h: 47337, l: 46797, complete: false }, // 現在這一盤
+  ];
+  const r = periodRange(S, "D", 46900);
+  assert.equal(r.baseHi, 47555); assert.equal(r.baseLo, 46872);
+  assert.equal(r.hi, 47555); assert.equal(r.lo, 46797); assert.equal(r.brokeLo, true);
+  // 收盤後（這一盤已完成）→ 下一盤的基準是剛收的日盤＋前一個夜盤
+  const after = periodRange(S.map(x => ({ ...x, complete: true })), "D");
+  assert.equal(after.hi, 47555); assert.equal(after.lo, 46797); assert.equal(after.live, false);
 });
 
 test("週、月用上一個完整期間，破高破底跟著擴大", () => {
@@ -36,6 +45,5 @@ test("週、月用上一個完整期間，破高破底跟著擴大", () => {
   assert.equal(w.lo, 80); assert.equal(w.brokeLo, true);   // 現價破底 → 低點跟著改
   const m = periodRange(S, "M", 120);
   assert.equal(m.hi, 999); assert.equal(m.from, "20261014"); // 上一個月 9/17～10/21
-  const d = periodRange(S, "D", 150);
-  assert.equal(d.hi, 150); assert.equal(d.lo, 135);
+
 });

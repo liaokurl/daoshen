@@ -526,6 +526,7 @@ function sixPeriod(c, mode) {
   return r ? { ...r, L: sixLevels(r.hi, r.lo) } : null;
 }
 function sixSpan(r) {
+  if (r.mode === "D" && r.base) return `${r.base.map(b => `${md(b.start)} ${b.type === "N" ? "夜盤" : "日盤"}`).join("＋")}（前兩盤的最高／最低${r.live ? "，這一盤進行中" : ""}）`;
   const rule = { D: "前一晚夜盤＋當天日盤", W: "上一個完整的週，週三結算到週三結算", M: "上一個完整的月，第三個週三結算到第三個週三結算" }[r.mode];
   return `${md(r.from)}${r.from !== r.to ? `～${md(r.to)}` : ""}（${rule}，${r.days} 個交易日${r.live ? "，含盤中" : ""}）`;
 }
@@ -553,7 +554,7 @@ function sixCard(c) {
   return `<section class="card" id="six-card">
     <h2>六層多空點位｜${SIX_NAME[mode]}</h2>
     <div class="manual">${btns}</div>
-    ${r ? `<p class="note">區間：${esc(sixSpan(r))}。${r.prev ? `高低用上一期（${fmt(r.baseHi)}／${fmt(r.baseLo)}），這一期破高或破底就立刻跟著擴大；${r.mode === "W" ? "下個週三" : "下個月第三個週三"}收盤後換新一期。${r.brokeLo ? `<b>已破底，低點改用 ${fmt(r.lo)}。</b>` : ""}${r.brokeHi ? `<b>已破高，高點改用 ${fmt(r.hi)}。</b>` : ""}` : `高低自動取這段期間的最高／最低，現價突破就立刻跟著改。${r.brokeLo ? "<b>今天已破底，空方各層已重算。</b>" : ""}`}</p>` : ""}
+    ${r ? `<p class="note">區間：${esc(sixSpan(r))}。${r.prev ? `高低用上一期（${fmt(r.baseHi)}／${fmt(r.baseLo)}），這一期破高或破底就立刻跟著擴大；${r.mode === "W" ? "下個週三" : "下個月第三個週三"}收盤後換新一期。${r.brokeLo ? `<b>已破底，低點改用 ${fmt(r.lo)}。</b>` : ""}${r.brokeHi ? `<b>已破高，高點改用 ${fmt(r.hi)}。</b>` : ""}` : `基準高 ${fmt(r.baseHi)}／低 ${fmt(r.baseLo)}，這一盤破高或破底就立刻納入重算。${r.brokeLo ? `<b>已破底，低點改用 ${fmt(r.lo)}，各層已重算。</b>` : ""}${r.brokeHi ? `<b>已破高，高點改用 ${fmt(r.hi)}，各層已重算。</b>` : ""}`}</p>` : ""}
     ${sixResult(r, c.price)}
     <p class="note">多空中軸＝（高＋低）÷2；多方＝中軸＋距離×倍率，空方＝中軸−距離×倍率；倍率 0.382／0.618／0.786／1／1.272／1.618。結算日照「週三」「第三個週三」計算，遇到休市順延的那次會差一天。高低用台指期近月（微台同價）。沒有回測驗證，當區間規劃參考。</p>
   </section>`;
@@ -586,7 +587,7 @@ function sixMini(c) {
       <div class="h"><span></span><span class="t-up">多 5</span><span>中軸</span><span class="t-down">空 5</span></div>
       ${rows.map(({ label, r }) => `<div class="row"><span><b>${label}</b><small>${esc(pos(r.L))}</small></span><b class="t-up">${fmt(r.L.up[4])}</b><b>${fmt(r.L.mid)}</b><b class="t-down">${fmt(r.L.dn[4])}</b></div>`).join("")}
     </div>
-    <p class="note">日＝一個交易日（夜盤＋日盤），高低被突破會立刻重算；週＝上一個完整的週；月＝上一個完整的月；三種都是破高／破底就立刻重算。完整 13 個點位在「葵哥」分頁。方向看上面的主開關與三刀流，這裡只看點位。</p>
+    <p class="note">日＝前兩盤（前一個日盤＋夜盤）；週＝上一個完整的週；月＝上一個完整的月；三種都是破高／破底就立刻重算。完整 13 個點位在「葵哥」分頁。方向看上面的主開關與三刀流，這裡只看點位。</p>
   </section>`;
 }
 function bindSix() {

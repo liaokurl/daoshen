@@ -576,7 +576,7 @@ function testRoll() {
 
 
 // ================= 參考目標：六層點位（日）的下一階、下下階 =================
-// 跟 App「葵哥」分頁的六層一樣：日＝前一晚夜盤＋當天日盤；週＝週三結算後；月＝第三個週三結算後。高低被突破就跟著擴大。
+// 跟 App「葵哥」分頁的六層「日」一樣：前兩盤的高低當基準，這一盤破高／破底就跟著擴大。
 const SIX_MODE = 'D';
 const SIX_R = [0.382, 0.618, 0.786, 1, 1.272, 1.618];
 function ymdOf_(ms) { return Utilities.formatDate(new Date(ms), 'UTC', 'yyyyMMdd'); }
@@ -596,30 +596,33 @@ function sixSummaries_() {
   cache.put('sixSum', JSON.stringify(rows), 600);
   return rows;
 }
-/** 回傳 { mode, hi, lo, t: [下一階, 下下階] }；at＝訊號時間（毫秒），d＝Yahoo 分K（算這一盤到訊號為止的高低） */
+/** 回傳 { mode, hi, lo, t: [下一階, 下下階] }；at＝訊號時間（毫秒），d＝Yahoo 分K
+ *  日＝前兩盤（現在日盤 → 前一天日盤＋昨晚夜盤；現在夜盤 → 今天日盤＋昨晚夜盤）的高低，這一盤到訊號為止破高／破底就納入 */
+function sessTypeOf_(ms) { const t = new Date(ms + 8 * H), m = t.getUTCHours() * 60 + t.getUTCMinutes(); return m >= 15 * 60 || m < 5 * 60 + 5 ? 'N' : 'D'; }
 function sixTargets_(dir, px, d, at) {
-  const tdMs = tdAt_(at), td = ymdOf_(tdMs);
-  const m = new Date(at + 8 * H).getUTCHours() * 60 + new Date(at + 8 * H).getUTCMinutes();
-  const type = m >= 15 * 60 || m < 5 * 60 + 5 ? 'N' : 'D';
-  let hi = px, lo = px;
+  const sess = {};
+  const add = (k, h, l) => { const x = sess[k]; if (!x) sess[k] = { h: h, l: l }; else { x.h = Math.max(x.h, h); x.l = Math.min(x.l, l); } };
+  sixSummaries_().forEach(x => add(x.td + (x.type === 'N' ? '0' : '1'), x.h, x.l));
   if (d && d.timestamp) {
-    const q = d.indicators.quote[0], s0 = sessionStartOf_(at - 60000);
+    const q = d.indicators.quote[0];
     d.timestamp.forEach((t, i) => {
       const ms = fixYahoo_(t * 1000 - 60000);
-      if (q.high[i] == null || ms < s0 || ms >= at) return;
-      hi = Math.max(hi, q.high[i]); lo = Math.min(lo, q.low[i]);
+      if (q.high[i] == null || ms >= at || sessionStartOf_(ms) == null) return;
+      const ty = sessTypeOf_(ms);
+      add(ymdOf_(tdAt_(ms)) + (ty === 'N' ? '0' : '1'), q.high[i], q.low[i]);
     });
   }
-  const anchor = sixAnchor_(SIX_MODE, tdMs);
-  sixSummaries_().forEach(x => {
-    if (x.td <= anchor || x.td > td || (x.td === td && x.type === type)) return;
-    hi = Math.max(hi, x.h); lo = Math.min(lo, x.l);
-  });
+  const curMs = at - 60000, cur = ymdOf_(tdAt_(curMs)) + (sessTypeOf_(curMs) === 'N' ? '0' : '1');
+  const base = Object.keys(sess).filter(k => k < cur).sort().slice(-2);
+  if (!base.length) return null;
+  let hi = Math.max.apply(null, base.map(k => sess[k].h)), lo = Math.min.apply(null, base.map(k => sess[k].l));
+  if (sess[cur]) { hi = Math.max(hi, sess[cur].h); lo = Math.min(lo, sess[cur].l); }
+  hi = Math.max(hi, px); lo = Math.min(lo, px);
   if (!(hi > lo)) return null;
   const mid = (hi + lo) / 2, half = hi - mid;
-  const lv = [mid].concat(SIX_R.map(r => mid + half * r), SIX_R.map(r => mid - half * r)).map(Math.round).sort((a, b) => a - b);
+  const lv = [mid].concat(SIX_R.map(r => mid + half * r), SIX_R.map(r => mid - half * r)).map(Math.round).sort((p, q) => p - q);
   const t = dir > 0 ? lv.filter(v => v > px + 1) : lv.filter(v => v < px - 1).reverse();
-  return { mode: SIX_MODE, hi: hi, lo: lo, t: t.slice(0, 2) };
+  return { mode: 'D', hi: hi, lo: lo, t: t.slice(0, 2) };
 }
 function targetLine_(dir, px, d, at) {
   let r = null;
