@@ -526,7 +526,7 @@ function sixPeriod(c, mode) {
   return r ? { ...r, L: sixLevels(r.hi, r.lo) } : null;
 }
 function sixSpan(r) {
-  const rule = { D: "前一晚夜盤＋當天日盤", W: "週三結算後起算", M: "月結算（第三個週三）後起算" }[r.mode];
+  const rule = { D: "前一晚夜盤＋當天日盤", W: "上一個完整的週，週三結算到週三結算", M: "上一個完整的月，第三個週三結算到第三個週三結算" }[r.mode];
   return `${md(r.from)}${r.from !== r.to ? `～${md(r.to)}` : ""}（${rule}，${r.days} 個交易日${r.live ? "，含盤中" : ""}）`;
 }
 function sixResult(r, price) {
@@ -553,7 +553,7 @@ function sixCard(c) {
   return `<section class="card" id="six-card">
     <h2>六層多空點位｜${SIX_NAME[mode]}</h2>
     <div class="manual">${btns}</div>
-    ${r ? `<p class="note">區間：${esc(sixSpan(r))}。高低自動取這段期間的最高／最低，現價突破就立刻跟著改。</p>` : ""}
+    ${r ? `<p class="note">區間：${esc(sixSpan(r))}。${r.prev ? `高低固定用上一期，這一期結束（${r.mode === "W" ? "下個週三" : "下個月第三個週三"}收盤）才換。${r.broke ? "現價已超出上一期高低，看第 5、6 層。" : ""}` : "高低自動取這段期間的最高／最低，現價突破就立刻跟著改。"}</p>` : ""}
     ${sixResult(r, c.price)}
     <p class="note">多空中軸＝（高＋低）÷2；多方＝中軸＋距離×倍率，空方＝中軸−距離×倍率；倍率 0.382／0.618／0.786／1／1.272／1.618。結算日照「週三」「第三個週三」計算，遇到休市順延的那次會差一天。高低用台指期近月（微台同價）。沒有回測驗證，當區間規劃參考。</p>
   </section>`;
@@ -586,7 +586,7 @@ function sixMini(c) {
       <div class="h"><span></span><span class="t-up">多 5</span><span>中軸</span><span class="t-down">空 5</span></div>
       ${rows.map(({ label, r }) => `<div class="row"><span><b>${label}</b><small>${esc(pos(r.L))}</small></span><b class="t-up">${fmt(r.L.up[4])}</b><b>${fmt(r.L.mid)}</b><b class="t-down">${fmt(r.L.dn[4])}</b></div>`).join("")}
     </div>
-    <p class="note">日＝一個交易日（夜盤＋日盤）；週＝週三結算後起算；月＝第三個週三結算後起算。高低被突破會立刻重算。完整 13 個點位在「葵哥」分頁。方向看上面的主開關與三刀流，這裡只看點位。</p>
+    <p class="note">日＝一個交易日（夜盤＋日盤），高低被突破會立刻重算；週＝上一個完整的週；月＝上一個完整的月（週、月固定，結算後才換）。完整 13 個點位在「葵哥」分頁。方向看上面的主開關與三刀流，這裡只看點位。</p>
   </section>`;
 }
 function bindSix() {
