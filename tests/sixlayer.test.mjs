@@ -23,15 +23,17 @@ test("高低被突破時跟著現價改", () => {
   assert.equal(r.hi, 110); assert.equal(r.lo, 90); assert.equal(r.broke, true);
 });
 
-test("週、月用上一個完整期間，而且不跟著現價擴大", () => {
+test("週、月用上一個完整期間，破高破底跟著擴大", () => {
   const S = [
     { td: "20261014", type: "D", h: 999, l: 1 },     // 上上週，不算
     { td: "20261015", type: "D", h: 120, l: 100 },   // 上一週 10/15～10/21
     { td: "20261021", type: "D", h: 130, l: 95 },
     { td: "20261022", type: "N", h: 140, l: 135 },   // 這一週，不算
   ];
-  const w = periodRange(S, "W", 200);
-  assert.equal(w.hi, 130); assert.equal(w.lo, 95); assert.equal(w.from, "20261015"); assert.equal(w.to, "20261021"); assert.equal(w.broke, true);
+  const w0 = periodRange(S, "W", 120);
+  assert.equal(w0.hi, 140); assert.equal(w0.lo, 95); assert.equal(w0.from, "20261015"); assert.equal(w0.brokeHi, true); // 這週夜盤 140 已破上週高 130
+  const w = periodRange(S, "W", 80);
+  assert.equal(w.lo, 80); assert.equal(w.brokeLo, true);   // 現價破底 → 低點跟著改
   const m = periodRange(S, "M", 120);
   assert.equal(m.hi, 999); assert.equal(m.from, "20261014"); // 上一個月 9/17～10/21
   const d = periodRange(S, "D", 150);
