@@ -226,3 +226,24 @@ details.card > .inner { padding: 0 16px 16px; }
 .pos.flat .pl b { margin-left: 6px; }
 .reentry { margin: 0 0 12px; padding: 12px 14px; border-radius: 14px; font-size: 15px; line-height: 1.7; border: 2px solid; }
 .reentry.up { border-color: var(--up); } .reentry.down { border-color: var(--down); }
+
+/* ---------- 畫線看盤 ---------- */
+.dl-bar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.dl-bar button { padding: 6px 10px; }
+#draw-svg { display: block; width: 100%; height: auto; touch-action: manipulation; }
+#draw-svg.drawing { cursor: crosshair; outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: 6px; }
+.dl-add { display: flex; gap: 8px; margin: 10px 0; }
+.dl-add input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font-size: 16px; }
+.dl-list { display: grid; gap: 6px; }
+.dl-row { display: grid; grid-template-columns: auto auto 1fr auto auto; align-items: center; gap: 4px 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-variant-numeric: tabular-nums; }
+.dl-row.hit { border-color: var(--up); background: var(--up-soft); }
+.dl-p { font-size: 18px; }
+.t-mix { color: var(--mix); } .t-acc { color: var(--accent); }
+.dl-kind { border: 0; border-radius: 999px; padding: 2px 10px; font-weight: 700; cursor: pointer; }
+.dl-kind.sup { background: var(--accent-soft); color: var(--accent); }
+.dl-kind.res { background: var(--mix-soft); color: var(--mix); }
+.dl-d { color: var(--muted); font-size: 13px; }
+.dl-ic { padding: 4px 8px; }
+.dl-plan { grid-column: 1 / -1; font-size: 13px; color: var(--muted); }
+.dl-foot { margin-top: 8px; }
+#dl-toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 50; max-width: min(92vw, 520px); padding: 12px 16px; border-radius: 10px; background: var(--ink); color: var(--card); font-weight: 600; box-shadow: var(--shadow); }

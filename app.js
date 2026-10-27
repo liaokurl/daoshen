@@ -105,15 +105,16 @@ function compute() {
   const lastDone = doneSums.at(-1);
   const kg = kuigeModel({ prevSession: liveNow ? lastDone : lastDone, currentBars: liveNow ? sessionBars : [], price });
   // 使用者自己的指標：微台 5 分K
-  let my = null;
+  let my = null, b5 = null;
   if (B.tmf5?.length) {
-    const b5 = buildBars15(B.tmf5);
+    const all5 = buildBars15(B.tmf5);
     const liveTmf = B.tmf5.find(s => s.complete === false);
-    const asOf5 = liveTmf && B.tmfLive?.lastBarTime ? B.tmfLive.lastBarTime + 60_000 : (b5.at(-1)?.end ?? 0);
-    const done5 = b5.filter(b => b.end <= asOf5);
+    const asOf5 = liveTmf && B.tmfLive?.lastBarTime ? B.tmfLive.lastBarTime + 60_000 : (all5.at(-1)?.end ?? 0);
+    const done5 = all5.filter(b => b.end <= asOf5);
+    b5 = done5;
     if (done5.length > 100) my = { sn: proSniper(done5), wo: washout(done5), zs: zhanshenBand(done5), ce: chandelierExit(aggregate(done5, 60).filter(b => !b.partial)), sw60: swingLows(aggregate(done5, 60).filter(b => !b.partial)), sw30: swingLows(aggregate(done5, 30).filter(b => !b.partial)), last: done5.at(-1), live: Boolean(liveTmf), src: B.tmf5.find(s => s.start + s.type === done5.at(-1).key)?.source };
   }
-  return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, chgLabel, dataAsOf, liveNow, R, now, sw, tt, summary, pcr, kg, my };
+  return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, chgLabel, dataAsOf, liveNow, R, now, sw, tt, summary, pcr, kg, my, b5 };
 }
 
 function render() {
@@ -131,7 +132,7 @@ function render() {
   }
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
   const defs = {
-    dao: [["zs", "傑哥戰神帶狀", zsCard], ["my", "我的指標（狙擊）", myCard], ["ce", "多空主開關", ceCard], ["six", "六層第 5 層", sixMini], ["swing", "前低第二支腳", swingCard], ["sword", "三刀流", swordCard], ["sig", "TradingView 快訊", signalsCard], ["struct", "均線結構", structureCard], ["chart", "走勢圖", chartCard]],
+    dao: [["zs", "傑哥戰神帶狀", zsCard], ["my", "我的指標（狙擊）", myCard], ["ce", "多空主開關", ceCard], ["draw", "畫線看盤", drawCard], ["six", "六層第 5 層", sixMini], ["swing", "前低第二支腳", swingCard], ["sword", "三刀流", swordCard], ["sig", "TradingView 快訊", signalsCard], ["struct", "均線結構", structureCard], ["chart", "走勢圖", chartCard]],
     kui: [["six", "六層多空點位", sixCard], ["kuige", "葵哥三等分", kuigeCard]],
     plan: [["plan", "盤前計畫", planCard], ["review", "檢討", reviewCard]],
     more: [["ext", "外部資料", extCard], ["stats", "回測統計", statsCard], ["status", "資料狀態", statusCard]],
@@ -147,6 +148,8 @@ function render() {
   bind();
   bindSix();
   bindLayout();
+  checkLineAlerts(c);
+  bindDraw();
   document.getElementById("more-snipe")?.addEventListener("toggle", e => { state.snipeOpen = e.target.open; e.target.querySelector("summary").textContent = e.target.open ? "收起" : `顯示其他 ${e.target.querySelectorAll(".fr").length} 筆`; });
   document.getElementById("more-flips")?.addEventListener("toggle", e => { state.flipsOpen = e.target.open; e.target.querySelector("summary").textContent = e.target.open ? "收起" : `顯示其他 ${e.target.querySelectorAll(".fr").length} 筆`; });
   // 自動更新時保留輸入框的游標，不打斷正在輸入的數字
@@ -160,7 +163,9 @@ function saveLayout(v) { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(v
 function orderOf(tab, defs) {
   const L = loadLayout()[tab] ?? {};
   const ids = defs.map(d => d[0]);
-  const order = [...(L.order ?? []).filter(id => ids.includes(id)), ...ids.filter(id => !(L.order ?? []).includes(id))];
+  const order = (L.order ?? []).filter(id => ids.includes(id));
+  // 新加入的卡片放在預設順序裡它前一張卡片的後面，不要都擠到最下面
+  ids.forEach((id, k) => { if (order.includes(id)) return; const prev = ids.slice(0, k).reverse().find(p => order.includes(p)); order.splice(prev ? order.indexOf(prev) + 1 : 0, 0, id); });
   return { order, hidden: new Set((L.hidden ?? []).filter(id => ids.includes(id))) };
 }
 function layoutCards(tab, defs, c) {
@@ -335,6 +340,135 @@ function levelRow(l, price) {
     <div class="stat">${statLines(l)}</div>
     ${l.status && l.status !== "未碰" ? `<span class="status">本盤：${esc(l.status)}</span>` : ""}
   </div>`;
+}
+
+// ---------- 畫線看盤：自己畫支撐／壓力線，價格碰到時提醒 ----------
+const DRAW_KEY = "daoshen-lines", DRAW_TF_KEY = "daoshen-draw-tf";
+function loadLines() { try { const v = JSON.parse(localStorage.getItem(DRAW_KEY) ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } }
+function saveLines(v) { try { localStorage.setItem(DRAW_KEY, JSON.stringify(v)); } catch { /* 私密模式 */ } }
+function drawTf() { try { const v = Number(localStorage.getItem(DRAW_TF_KEY)); return [5, 15, 60].includes(v) ? v : 60; } catch { return 60; } }
+function lineStopPts(c) { const a = c.my?.sw60?.atr; return Math.max(20, Math.round((a ?? 120) * 0.5)); }
+function addLine(price, c) {
+  const p = Math.round(price);
+  const lines = loadLines();
+  if (lines.some(l => Math.abs(l.price - p) < 3)) return;
+  lines.push({ id: Date.now().toString(36), price: p, kind: c.price != null && p > c.price ? "壓力" : "支撐", alert: true });
+  lines.sort((a, b) => b.price - a.price);
+  saveLines(lines);
+}
+function drawCard(c) {
+  if (!c.b5?.length) return "";
+  const tf = drawTf();
+  const all = tf === 5 ? c.b5 : aggregate(c.b5, tf);
+  const N = Math.min(tf === 60 ? 72 : 90, all.length);
+  const bars = all.slice(-N);
+  const lines = loadLines();
+  const auto = (c.my?.sw60?.lows ?? []).slice(0, 3);
+  const price = c.price ?? bars.at(-1).c;
+  let lo = Math.min(...bars.map(b => b.l), price), hi = Math.max(...bars.map(b => b.h), price);
+  const span = hi - lo;
+  // 畫面範圍：K 棒加上附近的線（太遠的線不撐開畫面，改列在下面）
+  for (const p of [...lines.map(l => l.price), ...auto.map(a => a.price)]) if (p > lo - span * 0.35 && p < hi + span * 0.35) { lo = Math.min(lo, p); hi = Math.max(hi, p); }
+  const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
+  const W = 700, H = 460, L = 4, Rr = 62;
+  const x = i => L + (i + 0.5) * ((W - L - Rr) / N);
+  const y = v => 8 + (hi - v) / (hi - lo) * (H - 24);
+  const bw = Math.max(1.5, (W - L - Rr) / N * 0.6);
+  const candles = bars.map((b, i) => {
+    const up = b.c >= b.o, col = up ? "var(--up)" : "var(--down)";
+    const top = y(Math.max(b.o, b.c)), bot = y(Math.min(b.o, b.c));
+    return `<line x1="${x(i)}" x2="${x(i)}" y1="${y(b.h)}" y2="${y(b.l)}" stroke="${col}" stroke-width="1"/><rect x="${x(i) - bw / 2}" y="${top}" width="${bw}" height="${Math.max(1, bot - top)}" fill="${up ? "var(--card)" : col}" stroke="${col}"/>`;
+  }).join("");
+  const inView = p => p >= lo && p <= hi;
+  const autoSvg = auto.filter(a => inView(a.price)).map(a => `<line x1="${L}" x2="${W - Rr}" y1="${y(a.price)}" y2="${y(a.price)}" stroke="var(--muted)" stroke-dasharray="2 4" stroke-width="1"/><text x="${L + 4}" y="${y(a.price) - 4}" font-size="11" fill="var(--muted)">60分前低 ${fmt(a.price)}</text>`).join("");
+  const userSvg = lines.filter(l => inView(l.price)).map(l => {
+    const col = l.kind === "壓力" ? "var(--mix)" : "var(--accent)";
+    return `<line x1="${L}" x2="${W - Rr}" y1="${y(l.price)}" y2="${y(l.price)}" stroke="${col}" stroke-width="2"/><rect x="${W - Rr + 2}" y="${y(l.price) - 9}" width="${Rr - 4}" height="18" rx="3" fill="${col}"/><text x="${W - Rr + 6}" y="${y(l.price) + 4}" font-size="12" font-weight="700" fill="var(--card)">${fmt(l.price)}</text>`;
+  }).join("");
+  const pr = `<line x1="${L}" x2="${W - Rr}" y1="${y(price)}" y2="${y(price)}" stroke="var(--ink)" stroke-width=".8" stroke-dasharray="1 3"/><text x="${W - Rr + 6}" y="${y(price) + 4}" font-size="12" font-weight="700" fill="var(--ink)">${fmt(price)}</text>`;
+  const sp = lineStopPts(c);
+  const near = l => Math.abs(price - l.price) <= Math.max(10, sp * 0.3);
+  const rows = lines.map(l => {
+    const d = l.price - price, res = l.kind === "壓力";
+    const plan = res ? `靠近可試空，停損 ${fmt(l.price + sp)}（+${sp}）` : `靠近可試多，停損 ${fmt(l.price - sp)}（−${sp}）`;
+    return `<div class="dl-row${near(l) ? " hit" : ""}">
+      <b class="dl-p ${res ? "t-mix" : "t-acc"}">${fmt(l.price)}</b>
+      <button type="button" class="dl-kind ${res ? "res" : "sup"}" data-dl-kind="${l.id}" aria-label="切換支撐或壓力">${l.kind}</button>
+      <span class="dl-d">${near(l) ? "<b>已到附近</b>" : `距現價 ${signed(d)} 點`}${inView(l.price) ? "" : "（在畫面外）"}</span>
+      <button type="button" class="ghost dl-ic" data-dl-alert="${l.id}" aria-label="${l.alert ? "關閉提醒" : "開啟提醒"}">${l.alert ? "🔔" : "🔕"}</button>
+      <button type="button" class="ghost dl-ic" data-dl-del="${l.id}" aria-label="刪除這條線">✕</button>
+      <span class="dl-plan">${plan}</span>
+    </div>`;
+  }).join("");
+  const tfBtns = [5, 15, 60].map(t => `<button type="button" class="${t === tf ? "primary" : "ghost"}" data-dl-tf="${t}">${t} 分</button>`).join("");
+  return `<section class="card" id="draw-card">
+    <h2>畫線看盤｜微台 ${tf} 分K</h2>
+    <div class="dl-bar">${tfBtns}<button type="button" class="${state.drawMode ? "primary" : "ghost"}" data-dl-mode="1">${state.drawMode ? "✏️ 畫線中，點圖加線" : "✏️ 畫線"}</button></div>
+    <div class="chart-wrap"><svg id="draw-svg" class="${state.drawMode ? "drawing" : ""}" viewBox="0 0 ${W} ${H}" data-hi="${hi}" data-lo="${lo}" data-h="${H}" role="img" aria-label="${tf}分K線與自己畫的線">${autoSvg}${userSvg}${candles}${pr}</svg></div>
+    <div class="dl-add"><input id="dl-price" type="number" inputmode="numeric" placeholder="輸入價位，例如 45700" aria-label="線的價位"><button type="button" class="primary" data-dl-add="1">加線</button></div>
+    ${lines.length ? `<div class="dl-list">${rows}</div>` : `<p class="note">還沒有線。按「✏️ 畫線」後點圖上的價位，或直接輸入價位加線。高於現價自動當壓力、低於現價當支撐，點標籤可以切換。</p>`}
+    ${lines.length ? `<div class="dl-foot"><button type="button" class="ghost" data-dl-clear="1">${state.dlClear ? "再按一次確定清除全部" : "清除全部線"}</button></div>` : ""}
+    <p class="note">停損參考＝60 分K 平均波幅的一半（目前 ${sp} 點）。🔔 開著時，App 開在畫面上、價格碰到或穿過線就會震動跳提醒。線只存在這台裝置。灰色虛線是系統找的 60 分前低。支撐壓力不保證守住，先看主開關方向再決定要不要接。</p>
+  </section>`;
+}
+function bindDraw() {
+  const card = document.getElementById("draw-card");
+  if (!card) return;
+  const c = state.lastC;
+  card.querySelectorAll("[data-dl-tf]").forEach(b => b.addEventListener("click", () => { try { localStorage.setItem(DRAW_TF_KEY, b.dataset.dlTf); } catch { /* 忽略 */ } render(); }));
+  card.querySelector("[data-dl-mode]")?.addEventListener("click", () => { state.drawMode = !state.drawMode; render(); });
+  const svg = document.getElementById("draw-svg");
+  svg?.addEventListener("click", e => {
+    if (!state.drawMode) return;
+    const r = svg.getBoundingClientRect(), H = Number(svg.dataset.h), hi = Number(svg.dataset.hi), lo = Number(svg.dataset.lo);
+    const vy = (e.clientY - r.top) * H / r.height;
+    addLine(hi - (vy - 8) / (H - 24) * (hi - lo), c);
+    askNotify();
+    render();
+  });
+  card.querySelector("[data-dl-add]")?.addEventListener("click", () => {
+    const v = Number(document.getElementById("dl-price").value);
+    if (Number.isFinite(v) && v > 1000) { addLine(v, c); askNotify(); render(); }
+  });
+  document.getElementById("dl-price")?.addEventListener("keydown", e => { if (e.key === "Enter") card.querySelector("[data-dl-add]").click(); });
+  const edit = fn => { const lines = loadLines(); fn(lines); saveLines(lines); render(); };
+  card.querySelectorAll("[data-dl-kind]").forEach(b => b.addEventListener("click", () => edit(ls => { const l = ls.find(x => x.id === b.dataset.dlKind); if (l) l.kind = l.kind === "壓力" ? "支撐" : "壓力"; })));
+  card.querySelectorAll("[data-dl-alert]").forEach(b => b.addEventListener("click", () => { askNotify(); edit(ls => { const l = ls.find(x => x.id === b.dataset.dlAlert); if (l) l.alert = !l.alert; }); }));
+  card.querySelectorAll("[data-dl-del]").forEach(b => b.addEventListener("click", () => edit(ls => { const i = ls.findIndex(x => x.id === b.dataset.dlDel); if (i >= 0) ls.splice(i, 1); })));
+  card.querySelector("[data-dl-clear]")?.addEventListener("click", () => { if (state.dlClear) { saveLines([]); state.dlClear = false; } else { state.dlClear = true; setTimeout(() => { state.dlClear = false; }, 5000); } render(); });
+}
+function askNotify() { try { if ("Notification" in window && Notification.permission === "default") Notification.requestPermission(); } catch { /* 不支援 */ } }
+function lineToast(msg) {
+  let t = document.getElementById("dl-toast");
+  if (!t) { t = document.createElement("div"); t.id = "dl-toast"; t.setAttribute("role", "status"); document.body.appendChild(t); }
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(t._h); t._h = setTimeout(() => { t.hidden = true; }, 12000);
+}
+/** 價格碰到或穿過自己畫的線 → 震動＋提醒（App 開著時） */
+function checkLineAlerts(c) {
+  state.lastC = c;
+  const price = c.price;
+  if (price == null) return;
+  const band = Math.max(10, Math.round(lineStopPts(c) * 0.3));
+  const prev = state.lastLinePrice;
+  state.lineFired ??= {};
+  for (const l of loadLines()) {
+    if (!l.alert) continue;
+    const dist = Math.abs(price - l.price);
+    const crossed = prev != null && (prev - l.price) * (price - l.price) < 0;
+    if (dist > band * 3) { state.lineFired[l.id] = false; continue; }
+    if ((dist <= band || crossed) && !state.lineFired[l.id]) {
+      state.lineFired[l.id] = true;
+      if (prev == null) continue; // 剛打開 App 時不算
+      const sp = lineStopPts(c);
+      const res = l.kind === "壓力";
+      const msg = `${crossed ? (price > l.price ? "突破" : "跌破") : "碰到"}${l.kind} ${fmt(l.price)}（現價 ${fmt(price)}）｜${res ? `試空停損 ${fmt(l.price + sp)}` : `試多停損 ${fmt(l.price - sp)}`}`;
+      lineToast("📏 " + msg);
+      try { navigator.vibrate?.([200, 100, 200]); } catch { /* 忽略 */ }
+      try { if ("Notification" in window && Notification.permission === "granted") new Notification("刀神×葵哥｜畫線提醒", { body: msg, tag: "line-" + l.id, icon: "icon-192.png" }); } catch { /* iOS 不在主畫面時不支援 */ }
+    }
+  }
+  state.lastLinePrice = price;
 }
 
 // ---------- 60 分 K 小圖 ----------
