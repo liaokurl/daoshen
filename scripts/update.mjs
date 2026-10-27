@@ -287,6 +287,22 @@ function buildBundle(all, stats, live) {
     }
   }
   const plans = list(p("plans")).sort().slice(-30).map(f => readJson(p("plans", f)));
+  // 「台指近全」連續圖（每一天用當時的近月合約、不做換月平移），給 App 畫線看盤的 60 分K／日K 用，跟看盤軟體一致
+  const frontOf = td2 => frontContract(td2, all.expiry);
+  const front15 = [];
+  for (const c2 of new Set([...all.calendar.slice(-40).map(frontOf), contract])) {
+    const ds2 = c2 === contract ? ds : contractDataset(c2, { ...all, provisional, nowMs: NOW });
+    for (const s of ds2.sessions15) if (s.td >= keepFrom && frontOf(s.td) === c2) front15.push(s);
+  }
+  front15.sort((a, b) => sessionStartMs(a.start, a.type) - sessionStartMs(b.start, b.type));
+  const frontDaily = all.calendar.slice(-260).map(td2 => {
+    const c2 = frontOf(td2);
+    const rows = all.dailyRows.filter(r => r.td === td2 && r.contract === c2);
+    const d = rows.find(r => r.type === "D"), n = rows.find(r => r.type === "N");
+    if (!d && !n) return null;
+    const ls = [n, d].filter(Boolean);
+    return { td: td2, contract: c2, o: (n ?? d).o, h: Math.max(...ls.map(x => x.h)), l: Math.min(...ls.map(x => x.l)), c: (d ?? n).c };
+  }).filter(Boolean);
   // 換月：結算日（每月第三個週三）前一週起，先把次月合約的資料一起送給手機；
   // 手機看到即時行情已經是次月（結算日 13:45 之後的夜盤）就自己切過去，不必等這支程式下一次跑。
   const expiryOf = c => all.expiry[c] ?? thirdWednesday(c);
@@ -308,7 +324,7 @@ function buildBundle(all, stats, live) {
     roll: rollInfo,
     target: { ...target, td, key: targetKey },
     calendarTail: all.calendar.slice(-10),
-    sessions15, summaries,
+    sessions15, summaries, front15, frontDaily,
     live: live ? { lastPrice: live.lastPrice, quotedAt: live.quotedAt, lastBarTime: live.lastBarTime, fetchedAt: live.fetchedAt, source: live.source } : null,
     status: {
       officialThrough: officialThrough ? sessionKey(officialThrough.start, officialThrough.type) : null,

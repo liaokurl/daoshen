@@ -346,7 +346,41 @@ function levelRow(l, price) {
 const DRAW_KEY = "daoshen-lines", DRAW_TF_KEY = "daoshen-draw-tf";
 function loadLines() { try { const v = JSON.parse(localStorage.getItem(DRAW_KEY) ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } }
 function saveLines(v) { try { localStorage.setItem(DRAW_KEY, JSON.stringify(v)); } catch { /* 私密模式 */ } }
-function drawTf() { try { const v = Number(localStorage.getItem(DRAW_TF_KEY)); return [5, 15, 60].includes(v) ? v : 60; } catch { return 60; } }
+function drawTf() { try { const v = localStorage.getItem(DRAW_TF_KEY); return ["5", "15", "60", "D"].includes(v) ? v : "60"; } catch { return "60"; } }
+const DRAW_ZOOM_KEY = "daoshen-draw-zoom", ZOOMS = [40, 80, 160, 300];
+const ZOOM_DEFAULT = { 5: 1, 15: 1, 60: 2, D: 2 };
+function drawZoom(tf) { try { const v = JSON.parse(localStorage.getItem(DRAW_ZOOM_KEY) ?? "{}")[tf]; return Number.isInteger(v) && v >= 0 && v < ZOOMS.length ? v : ZOOM_DEFAULT[tf]; } catch { return ZOOM_DEFAULT[tf]; } }
+function setDrawZoom(tf, z) { try { const all = JSON.parse(localStorage.getItem(DRAW_ZOOM_KEY) ?? "{}"); all[tf] = z; localStorage.setItem(DRAW_ZOOM_KEY, JSON.stringify(all)); } catch { /* 忽略 */ } }
+/** 畫線看盤用的 K 棒：5／15 分用微台；60 分、日K 用「台指近全」（每天當時的近月，跟看盤軟體一樣） */
+function drawBars(c, tf) {
+  const B = c.B;
+  if (tf === "5" || tf === "15") return c.b5?.length ? (tf === "5" ? c.b5 : aggregate(c.b5, 15)) : [];
+  if (tf === "60") {
+    const byKey = new Map((B.front15 ?? []).map(s => [s.start + s.type, s]));
+    for (const s of B.sessions15) { const k = s.start + s.type; const old = byKey.get(k); if (!old || s.contract === B.contract) byKey.set(k, s); }
+    const sess = [...byKey.values()].sort((a, b) => sessionStartMs(a.start, a.type) - sessionStartMs(b.start, b.type));
+    return aggregate(buildBars15(sess).filter(b => b.t < c.dataAsOf), 60);
+  }
+  const days = (B.frontDaily ?? []).map(d => ({ ...d, t: Date.parse(`${d.td.slice(0, 4)}-${d.td.slice(4, 6)}-${d.td.slice(6, 8)}T00:00:00+08:00`) }));
+  const cur = c.daily.at(-1);
+  if (cur) { const row = { td: cur.td, o: cur.o, h: cur.h, l: cur.l, c: c.price ?? cur.c, t: Date.parse(`${cur.td.slice(0, 4)}-${cur.td.slice(4, 6)}-${cur.td.slice(6, 8)}T00:00:00+08:00`) }; if (days.at(-1)?.td === cur.td) days[days.length - 1] = row; else days.push(row); }
+  if (!days.length) return c.daily.map(d => ({ ...d, t: Date.parse(`${d.td.slice(0, 4)}-${d.td.slice(4, 6)}-${d.td.slice(6, 8)}T00:00:00+08:00`) }));
+  return days;
+}
+/** 還沒被破的前低（支撐）、還沒被過的前高（壓力），離現價最近的幾個 */
+function majorLevels(bars, price, piv) {
+  const N = bars.length, lows = [], highs = [];
+  for (let i = piv; i < N - piv; i += 1) {
+    let lo = true, hi = true;
+    for (let k = i - piv; k <= i + piv; k += 1) { if (k === i) continue; if (bars[k].l < bars[i].l) lo = false; if (bars[k].h > bars[i].h) hi = false; }
+    if (lo && !bars.slice(i + 1).some(b => b.l < bars[i].l) && bars[i].l < price) lows.push({ price: bars[i].l, t: bars[i].t });
+    if (hi && !bars.slice(i + 1).some(b => b.h > bars[i].h) && bars[i].h > price) highs.push({ price: bars[i].h, t: bars[i].t });
+  }
+  // 很接近的兩個低點（或高點）只留一個，避免字疊在一起
+  const pick = (arr, keep) => arr.reduce((out, x) => (out.some(o => Math.abs(o.price - x.price) < Math.max(40, price * 0.0012)) ? out : [...out, x]), []).slice(0, keep);
+  return { lows: pick(lows.sort((a, b) => b.price - a.price), 3), highs: pick(highs.sort((a, b) => a.price - b.price), 2) };
+}
+const md2 = t => { const d = new Date(t + 8 * 3600e3); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`; };
 function lineStopPts(c) { const a = c.my?.sw60?.atr; return Math.max(20, Math.round((a ?? 120) * 0.5)); }
 function addLine(price, c) {
   const p = Math.round(price);
@@ -357,14 +391,16 @@ function addLine(price, c) {
   saveLines(lines);
 }
 function drawCard(c) {
-  if (!c.b5?.length) return "";
   const tf = drawTf();
-  const all = tf === 5 ? c.b5 : aggregate(c.b5, tf);
-  const N = Math.min(tf === 60 ? 72 : 90, all.length);
+  const all = drawBars(c, tf);
+  if (all.length < 10) return "";
+  const zoom = drawZoom(tf);
+  const N = Math.min(ZOOMS[zoom], all.length);
   const bars = all.slice(-N);
   const lines = loadLines();
-  const auto = (c.my?.sw60?.lows ?? []).slice(0, 3);
   const price = c.price ?? bars.at(-1).c;
+  const mj = majorLevels(all, price, tf === "D" ? 3 : 5);
+  const auto = [...mj.lows.map(a => ({ ...a, kind: "前低" })), ...mj.highs.map(a => ({ ...a, kind: "前高" }))];
   let lo = Math.min(...bars.map(b => b.l), price), hi = Math.max(...bars.map(b => b.h), price);
   const span = hi - lo;
   // 畫面範圍：K 棒加上附近的線（太遠的線不撐開畫面，改列在下面）
@@ -380,7 +416,9 @@ function drawCard(c) {
     return `<line x1="${x(i)}" x2="${x(i)}" y1="${y(b.h)}" y2="${y(b.l)}" stroke="${col}" stroke-width="1"/><rect x="${x(i) - bw / 2}" y="${top}" width="${bw}" height="${Math.max(1, bot - top)}" fill="${up ? "var(--card)" : col}" stroke="${col}"/>`;
   }).join("");
   const inView = p => p >= lo && p <= hi;
-  const autoSvg = auto.filter(a => inView(a.price)).map(a => `<line x1="${L}" x2="${W - Rr}" y1="${y(a.price)}" y2="${y(a.price)}" stroke="var(--muted)" stroke-dasharray="2 4" stroke-width="1"/><text x="${L + 4}" y="${y(a.price) - 4}" font-size="11" fill="var(--muted)">60分前低 ${fmt(a.price)}</text>`).join("");
+  const autoSvg = auto.filter(a => inView(a.price)).map(a => `<line x1="${L}" x2="${W - Rr}" y1="${y(a.price)}" y2="${y(a.price)}" stroke="var(--muted)" stroke-dasharray="2 4" stroke-width="1"/><text x="${L + 4}" y="${y(a.price) - 4}" font-size="13" fill="var(--muted)">${a.kind} ${md2(a.t)} ${fmt(a.price)}</text>`).join("");
+  // 底部日期
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => Math.min(N - 1, Math.round(f * (N - 1)))).map(i => `<text x="${Math.min(Math.max(x(i), 52), W - Rr - 40)}" y="${H - 2}" font-size="13" text-anchor="middle" fill="var(--muted)">${md2(bars[i].t)}${tf === "D" ? "" : " " + new Date(bars[i].t + 8 * 3600e3).toISOString().slice(11, 16)}</text>`).join("");
   const userSvg = lines.filter(l => inView(l.price)).map(l => {
     const col = l.kind === "壓力" ? "var(--mix)" : "var(--accent)";
     return `<line x1="${L}" x2="${W - Rr}" y1="${y(l.price)}" y2="${y(l.price)}" stroke="${col}" stroke-width="2"/><rect x="${W - Rr + 2}" y="${y(l.price) - 9}" width="${Rr - 4}" height="18" rx="3" fill="${col}"/><text x="${W - Rr + 6}" y="${y(l.price) + 4}" font-size="12" font-weight="700" fill="var(--card)">${fmt(l.price)}</text>`;
@@ -400,15 +438,19 @@ function drawCard(c) {
       <span class="dl-plan">${plan}</span>
     </div>`;
   }).join("");
-  const tfBtns = [5, 15, 60].map(t => `<button type="button" class="${t === tf ? "primary" : "ghost"}" data-dl-tf="${t}">${t} 分</button>`).join("");
+  const tfName = tf === "D" ? "日K" : `${tf} 分K`;
+  const tfBtns = [["5", "5 分"], ["15", "15 分"], ["60", "60 分"], ["D", "日K"]].map(([t, n]) => `<button type="button" class="${t === tf ? "primary" : "ghost"}" data-dl-tf="${t}">${n}</button>`).join("");
+  const zoomBtns = `<button type="button" class="ghost" data-dl-zoom="-1" ${zoom === 0 ? "disabled" : ""} aria-label="放大（看比較少根）">＋</button><button type="button" class="ghost" data-dl-zoom="1" ${zoom === ZOOMS.length - 1 || N >= all.length ? "disabled" : ""} aria-label="縮小（看比較多根）">－</button>`;
+  const autoTxt = auto.length ? auto.map(a => `${a.kind} ${md2(a.t)} <b>${fmt(a.price)}</b>`).join("｜") : "";
   return `<section class="card" id="draw-card">
-    <h2>畫線看盤｜微台 ${tf} 分K</h2>
-    <div class="dl-bar">${tfBtns}<button type="button" class="${state.drawMode ? "primary" : "ghost"}" data-dl-mode="1">${state.drawMode ? "✏️ 畫線中，點圖加線" : "✏️ 畫線"}</button></div>
-    <div class="chart-wrap"><svg id="draw-svg" class="${state.drawMode ? "drawing" : ""}" viewBox="0 0 ${W} ${H}" data-hi="${hi}" data-lo="${lo}" data-h="${H}" role="img" aria-label="${tf}分K線與自己畫的線">${autoSvg}${userSvg}${candles}${pr}</svg></div>
+    <h2>畫線看盤｜${tf === "5" || tf === "15" ? "微台" : "台指近全"} ${tfName}（${N} 根，${md2(bars[0].t)} 起）</h2>
+    <div class="dl-bar">${tfBtns}${zoomBtns}<button type="button" class="${state.drawMode ? "primary" : "ghost"}" data-dl-mode="1">${state.drawMode ? "✏️ 畫線中，點圖加線" : "✏️ 畫線"}</button></div>
+    <div class="chart-wrap"><svg id="draw-svg" class="${state.drawMode ? "drawing" : ""}" viewBox="0 0 ${W} ${H}" data-hi="${hi}" data-lo="${lo}" data-h="${H}" role="img" aria-label="${tfName}線與自己畫的線">${autoSvg}${userSvg}${candles}${pr}${ticks}</svg></div>
+    ${autoTxt ? `<p class="dl-auto">系統找到（還沒被破）：${autoTxt}</p>` : ""}
     <div class="dl-add"><input id="dl-price" type="number" inputmode="numeric" placeholder="輸入價位，例如 45700" aria-label="線的價位"><button type="button" class="primary" data-dl-add="1">加線</button></div>
     ${lines.length ? `<div class="dl-list">${rows}</div>` : `<p class="note">還沒有線。按「✏️ 畫線」後點圖上的價位，或直接輸入價位加線。高於現價自動當壓力、低於現價當支撐，點標籤可以切換。</p>`}
     ${lines.length ? `<div class="dl-foot"><button type="button" class="ghost" data-dl-clear="1">${state.dlClear ? "再按一次確定清除全部" : "清除全部線"}</button></div>` : ""}
-    <p class="note">停損參考＝60 分K 平均波幅的一半（目前 ${sp} 點）。🔔 開著時，App 開在畫面上、價格碰到或穿過線就會震動跳提醒。線只存在這台裝置。灰色虛線是系統找的 60 分前低。支撐壓力不保證守住，先看主開關方向再決定要不要接。</p>
+    <p class="note">停損參考＝60 分K 平均波幅的一半（目前 ${sp} 點）。🔔 開著時，App 開在畫面上、價格碰到或穿過線就會震動跳提醒。線只存在這台裝置。灰色虛線是系統找的前低／前高（之後還沒被跌破／突破），跟著上面選的週期。60 分K、日K 用台指近全（每天當時的近月合約，跟看盤軟體一樣）。支撐壓力不保證守住，先看主開關方向再決定要不要接。</p>
   </section>`;
 }
 function bindDraw() {
@@ -416,6 +458,7 @@ function bindDraw() {
   if (!card) return;
   const c = state.lastC;
   card.querySelectorAll("[data-dl-tf]").forEach(b => b.addEventListener("click", () => { try { localStorage.setItem(DRAW_TF_KEY, b.dataset.dlTf); } catch { /* 忽略 */ } render(); }));
+  card.querySelectorAll("[data-dl-zoom]").forEach(b => b.addEventListener("click", () => { const tf = drawTf(); setDrawZoom(tf, Math.max(0, Math.min(ZOOMS.length - 1, drawZoom(tf) + Number(b.dataset.dlZoom)))); render(); }));
   card.querySelector("[data-dl-mode]")?.addEventListener("click", () => { state.drawMode = !state.drawMode; render(); });
   const svg = document.getElementById("draw-svg");
   svg?.addEventListener("click", e => {
