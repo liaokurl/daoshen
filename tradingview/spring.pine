@@ -1,0 +1,72 @@
+//@version=5
+// 破底翻偵測（車干製）
+// 型態：出現低點 → 跌破低點 → 幾根內收盤站回 → 往上走一段 → 回測低點不破 → 標示並發出快訊
+// 用在 5／15／30 分K 都可以，門檻都用 ATR 計。
+// 回測 9/2～10/27 微台：之後先漲 1R 的比例跟隨機進場差不多，當提醒用，進場仍以傑哥帶狀＋60 分K 吊燈為主。
+indicator("破底翻偵測（車干製）", overlay = true, max_labels_count = 200, max_lines_count = 200)
+
+piv         = input.int(3,     "低點：左右各幾根",          minval = 1)
+breakAtr    = input.float(0.1, "跌破：低點下方幾倍 ATR",     step = 0.05)
+reclaimBars = input.int(12,    "跌破後幾根內要站回",         minval = 1)
+rallyAtr    = input.float(1.0, "站回後要先往上幾倍 ATR",     step = 0.1)
+retestAtr   = input.float(0.35,"回測：低點上方幾倍 ATR 內", step = 0.05)
+retestBars  = input.int(40,    "站回後幾根內要回測",         minval = 1)
+showLevel   = input.bool(true, "畫出低點線")
+
+atr = ta.atr(14)
+
+// 狀態：0＝等低點被跌破、1＝已跌破等站回、2＝已站回等往上、3＝已往上等回測
+var int   state  = 0
+var float level  = na     // 被跌破又站回的低點
+var float low2   = na     // 破底最低點
+var float hi     = na     // 站回後的最高點
+var int   barAt  = na     // 進入目前狀態的 bar_index
+
+pl = ta.pivotlow(low, piv, piv)
+
+// 沒有進行中的型態時，用最新確認的低點當監看對象
+if state == 0 and not na(pl)
+    level := pl
+
+signal = false
+
+if state == 0 and not na(level)
+    if low < level - breakAtr * atr
+        state := 1
+        low2  := low
+        barAt := bar_index
+else if state == 1
+    low2 := math.min(low2, low)
+    if close > level
+        state := 2
+        hi    := high
+        barAt := bar_index
+    else if bar_index - barAt > reclaimBars
+        state := 0
+        level := na
+else if state == 2 or state == 3
+    if close < level or low < low2 or bar_index - barAt > retestBars
+        state := 0
+        level := na
+    else
+        hi := math.max(hi, high)
+        if state == 2 and hi >= level + rallyAtr * atr
+            state := 3
+        else if state == 3 and low <= level + retestAtr * atr
+            signal := true
+
+stopPx   = low2 - 0.2 * atr
+targetPx = close + (hi - low2)
+
+if signal
+    label.new(bar_index, low, "破底翻\n" + str.tostring(close, "#"), style = label.style_label_up, color = color.new(color.red, 0), textcolor = color.white, size = size.small)
+    if showLevel
+        line.new(bar_index - 30, level, bar_index + 10, level, color = color.new(color.orange, 0), style = line.style_dashed)
+    alert("破底翻｜" + timeframe.period + "分K 回測不破，做多參考 " + str.tostring(close, "#") +
+          "\n低點 " + str.tostring(level, "#") + " 被跌破到 " + str.tostring(low2, "#") +
+          "\n停損 " + str.tostring(stopPx, "#") + "｜N 字目標 " + str.tostring(targetPx, "#"), alert.freq_once_per_bar_close)
+    state := 0
+    level := na
+
+plotshape(signal, "破底翻", shape.triangleup, location.belowbar, color.red, size = size.tiny)
+alertcondition(signal, "破底翻", "破底翻：回測低點不破，做多參考 {{close}}")

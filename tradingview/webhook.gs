@@ -151,6 +151,7 @@ function monitor() {
     props.setProperty('zs', JSON.stringify(st));
     ceUpdate_(d, props);
     try { h30Update_(d, props); } catch (err) { console.warn('30 分K 更新失敗：' + err); }
+    try { springMinutes_(d, props); } catch (err) { console.warn('破底翻 5／15 分失敗：' + err); }
   } finally {
     lock.releaseLock();
   }
@@ -445,6 +446,7 @@ function h30Update_(d, props) {
   st.bars = bars; st.lastT = bars[bars.length - 1].t;
   props.setProperty('h30', JSON.stringify(st));
   swingNotify_(bars, 30, props);
+  try { springNotify_(bars, 30, props); } catch (err) { console.warn('破底翻 30 分失敗：' + err); }
 }
 
 // ================= 雙重確認：狙擊（TradingView 快訊）＋傑哥帶狀，3 根 5 分K 內同方向 =================
@@ -631,4 +633,86 @@ function targetLine_(dir, px, d, at) {
   if (!r || !r.t.length) return '🎯 參考目標 ' + fmt_(px + dir * TP1) + '（' + pts(px + dir * TP1) + '）／' + fmt_(px + dir * TP2) + '（' + pts(px + dir * TP2) + '）';
   const name = { D: '日', W: '週', M: '月' }[r.mode];
   return '🎯 六層目標（' + name + '）' + r.t.map(v => fmt_(v) + '（' + pts(v) + '）').join('／') + (r.t.length < 2 ? '，再上去看移動停利' : '');
+}
+
+
+// ================= 破底翻：低點被跌破 → 站回 → 往上 → 回測低點不破（5／15／30 分K） =================
+// 回測 9/2～10/27 微台：5／15／30 分K 的破底翻，之後先漲 1R 的比例跟隨機進場差不多（沒有明顯優勢），所以通知只當提醒。
+const SPR = { piv: 3, look: 80, breakAtr: 0.1, reclaimBars: 12, rallyAtr: 1.0, retestAtr: 0.35, retestBars: 40 };
+function springAtr_(bars) {
+  const out = []; let a = null;
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i], p = bars[i - 1];
+    const tr = p ? Math.max(b.h - b.l, Math.abs(b.h - p.c), Math.abs(b.l - p.c)) : b.h - b.l;
+    if (i < 13) { out.push(null); continue; }
+    a = a == null ? tr : (a * 13 + tr) / 14; out.push(a);
+  }
+  return out;
+}
+/** 回傳最後一根剛好觸發的破底翻（沒有就 null） */
+function springLast_(bars) {
+  const N = bars.length, A = springAtr_(bars), last = N - 1;
+  for (let i = SPR.piv; i < N - SPR.piv; i++) {
+    let isLow = true;
+    for (let k = i - SPR.piv; k <= i + SPR.piv; k++) if (k !== i && bars[k].l < bars[i].l) { isLow = false; break; }
+    if (!isLow || last - i > SPR.look + SPR.reclaimBars + SPR.retestBars) continue;
+    const level = bars[i].l;
+    let brk = -1;
+    for (let j = i + SPR.piv + 1; j < N && j - i <= SPR.look; j++) { if (A[j] && bars[j].l < level - SPR.breakAtr * A[j]) { brk = j; break; } }
+    if (brk < 0) continue;
+    let low2 = bars[brk].l, rec = -1;
+    for (let k = brk; k < N && k - brk <= SPR.reclaimBars; k++) { low2 = Math.min(low2, bars[k].l); if (bars[k].c > level) { rec = k; break; } }
+    if (rec < 0) continue;
+    let rallied = false, hi = bars[rec].h;
+    for (let k = rec + 1; k < N && k - rec <= SPR.retestBars; k++) {
+      const a = A[k]; if (!a) continue;
+      const b = bars[k];
+      if (b.c < level || b.l < low2) break;
+      hi = Math.max(hi, b.h);
+      if (!rallied) { if (hi >= level + SPR.rallyAtr * a) rallied = true; continue; }
+      if (b.l <= level + SPR.retestAtr * a) {
+        if (k === last) return { level: level, low2: low2, close: b.c, t: b.t, stop: low2 - 0.2 * a, target: b.c + (hi - low2), from: bars[i].t };
+        break;
+      }
+    }
+  }
+  return null;
+}
+/** Yahoo 1 分K → 已收完的 per 分K（每盤從開盤起算） */
+function minuteBars_(d, per) {
+  const span = per * 60000, ts = d.timestamp || [], q = d.indicators.quote[0], map = {};
+  let lastMin = 0;
+  for (let i = 0; i < ts.length; i++) {
+    const h = q.high[i], l = q.low[i], c = q.close[i];
+    if ([h, l, c].some(v => v == null)) continue;
+    const ms = fixYahoo_(ts[i] * 1000 - 60000), s = sessionStartOf_(ms);
+    if (s == null) continue;
+    lastMin = Math.max(lastMin, ms);
+    const k = s + Math.floor((ms - s) / span) * span, b = map[k];
+    if (!b) map[k] = { t: k, h: h, l: l, c: c, last: ms, s: s };
+    else { b.h = Math.max(b.h, h); b.l = Math.min(b.l, l); if (ms >= b.last) { b.c = c; b.last = ms; } }
+  }
+  return Object.keys(map).map(k => map[k]).filter(b => {
+    const hr = new Date(b.s + 8 * H).getUTCHours();
+    const sEnd = b.s + (hr >= 15 ? 14 : 5) * H;
+    return Math.min(b.t + span, sEnd) <= lastMin + 60000;
+  }).sort((a, b) => a.t - b.t);
+}
+function springMinutes_(d, props) {
+  [5, 15].forEach(tf => springNotify_(minuteBars_(d, tf), tf, props));
+}
+function springNotify_(bars, tf, props) {
+  if (!bars || bars.length < 30) return;
+  const sig = springLast_(bars); if (!sig) return;
+  const key = 'spring' + tf; if (Number(props.getProperty(key) || 0) >= sig.t) return;
+  props.setProperty(key, String(sig.t));
+  const ce = JSON.parse(props.getProperty('ce') || '{}').dir || 0;
+  const timeTxt = Utilities.formatDate(new Date(sig.t + tf * 60000), 'Asia/Taipei', 'MM/dd HH:mm');
+  notify_('🔄 破底翻｜' + tf + '分K 回測不破，做多參考 ' + fmt_(sig.close), [
+    '📍 低點 ' + fmt_(sig.level) + ' 被跌破到 ' + fmt_(sig.low2) + '，站回後往上，' + timeTxt + ' 回測不破（收 ' + fmt_(sig.close) + '）',
+    '🛡 停損 ' + fmt_(sig.stop) + '（破底低點下方，風險約 ' + fmt_(sig.close - sig.stop) + ' 點）',
+    '🎯 N 字目標 ' + fmt_(sig.target),
+    ce > 0 ? '✅ 主開關＝多（順勢）' : ce < 0 ? '⚠️ 主開關＝空（逆勢，回測勝率更低，建議不做）' : '主開關未定',
+    '回測 9/2～10/27：破底翻勝率跟隨機進場差不多，當提醒用，進場還是看傑哥＋主開關',
+  ].join('\n'), 'red_circle', 4);
 }
