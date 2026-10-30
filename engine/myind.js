@@ -216,11 +216,21 @@ function wmaArr(src, n) {
  * 上軌＝最高價 WMA24、中軌＝收盤 WMA20、下軌＝最低價 WMA24。
  * 方向：收盤穿出上軌→偏多、跌破下軌→偏空，沒穿出對側就維持原方向。
  */
+/** 追價濾網：近 W 根 5 分K 的效率＝淨走幅 ÷ 來回總走幅（0＝來回震盪，1＝一路單邊）
+ *  回測 9/2～10/30 微台（傑哥翻向＋吊燈過濾，每筆扣 5 點）：效率 ≥ 0.2 時才翻向的單（＝追已經走一段的）拿掉後，
+ *  移動停利 180：−131 → +1,971 點、最大回落 −2,037 → −855；140：+926 → +2,093。門檻 0.15～0.5、看 1～2 小時都有改善。 */
+export const CHASE_ER = 0.2, CHASE_BARS = 24;
+export function effRatio(C, i, w = CHASE_BARS) {
+  if (i < w) return null;
+  let s = 0;
+  for (let k = i - w + 1; k <= i; k += 1) s += Math.abs(C[k] - C[k - 1]);
+  return s ? Math.abs(C[i] - C[i - w]) / s : 0;
+}
 export function zhanshenBand(bars, { upLen = 24, midLen = 20, loLen = 24, confirm = 2 } = {}) {
   const H = bars.map(b => b.h), L = bars.map(b => b.l), C = bars.map(b => b.c);
   const up = wmaArr(H, upLen), mid = wmaArr(C, midLen), lo = wmaArr(L, loLen);
   // 收盤連續 confirm 根都收在帶狀另一側才翻向（實測跟傑哥 10/16、10/19 共 10 筆訊號的方向與筆數一致）
-  let dir = 0, since = null, flipPrice = null, pend = 0, cnt = 0;
+  let dir = 0, since = null, flipPrice = null, flipEr = null, pend = 0, cnt = 0;
   const flips = [];
   for (let i = 0; i < bars.length; i += 1) {
     if (up[i] == null) continue;
@@ -229,12 +239,12 @@ export function zhanshenBand(bars, { upLen = 24, midLen = 20, loLen = 24, confir
     if (raw !== 0 && raw !== dir) { pend = raw; cnt += 1; }
     else if (raw !== 0 && raw === dir) { pend = 0; cnt = 0; }
     if (pend && cnt >= confirm) {
-      if (dir !== 0) flips.push({ t: bars[i].end, side: pend, price: C[i] });
-      dir = pend; since = bars[i].end; flipPrice = C[i]; pend = 0; cnt = 0;
+      if (dir !== 0) flips.push({ t: bars[i].end, side: pend, price: C[i], er: effRatio(C, i) });
+      dir = pend; since = bars[i].end; flipPrice = C[i]; flipEr = effRatio(C, i); pend = 0; cnt = 0;
     }
   }
   const i = bars.length - 1;
-  return { dir, since, flipPrice, pending: pend ? { side: pend, count: cnt, need: confirm } : null, up: up[i], mid: mid[i], lo: lo[i], close: C[i], flips: flips.slice(-30) };
+  return { dir, since, flipPrice, flipEr, erNow: effRatio(C, i), pending: pend ? { side: pend, count: cnt, need: confirm } : null, up: up[i], mid: mid[i], lo: lo[i], close: C[i], flips: flips.slice(-30) };
 }
 
 /**

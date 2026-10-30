@@ -9,7 +9,7 @@ import { threeSwords, turtle, pcrView, swordSummary, SWORD_MODES } from "./engin
 import { kuigeModel } from "./engine/kuige.js";
 import { loadSignals } from "./signals.js";
 import { fetchLive, applyLive } from "./live.js";
-import { proSniper, washout, zhanshenBand, chandelierExit, tradesFrom } from "./engine/myind.js";
+import { proSniper, washout, zhanshenBand, chandelierExit, tradesFrom, CHASE_ER } from "./engine/myind.js";
 import { sixLevels, periodRange, SIX_RATIOS, SIX_PERIODS } from "./engine/sixlayer.js";
 import { swingLows } from "./engine/swing.js";
 
@@ -916,12 +916,13 @@ function flipTable(flips, px, snipes = []) {
   const tot = closed.reduce((a, r) => a + r.pnl, 0), win = closed.filter(r => r.pnl > 0).length;
   const tone = v => (v > 0 ? "t-up" : v < 0 ? "t-down" : "");
   const all = rows.slice().reverse(), first = all.slice(0, 5), rest = all.slice(5);
-  const row = r => `<div class="fr${r.open ? " open" : ""}"><span>${fmtDateTime(r.t)}</span><span class="${r.side > 0 ? "t-up" : "t-down"}">${dual(r) ? "⭐" : ""}${r.side > 0 ? "翻多" : "翻空"} ${fmt(r.price)}</span><b class="${tone(r.pnl)}">${r.pnl == null ? "—" : `${signed(r.pnl)} 點`}${r.open ? "<small>持有中</small>" : ""}</b></div>`;
+  const row = r => `<div class="fr${r.open ? " open" : ""}"><span>${fmtDateTime(r.t)}</span><span class="${r.side > 0 ? "t-up" : "t-down"}">${dual(r) ? "⭐" : ""}${r.er != null && r.er >= CHASE_ER ? "⛔" : ""}${r.side > 0 ? "翻多" : "翻空"} ${fmt(r.price)}</span><b class="${tone(r.pnl)}">${r.pnl == null ? "—" : `${signed(r.pnl)} 點`}${r.open ? "<small>持有中</small>" : ""}</b></div>`;
   return `<div class="flips">
     ${first.map(row).join("")}
     ${rest.length ? `<details class="more-flips" id="more-flips"${state.flipsOpen ? " open" : ""}><summary>${state.flipsOpen ? "收起" : `顯示其他 ${rest.length} 筆`}</summary><div class="flips">${rest.map(row).join("")}</div></details>` : ""}
     ${closed.length ? `<div class="fr sum"><span>已結算 ${closed.length} 筆</span><span>勝率 ${Math.round(win / closed.length * 100)}%</span><b class="${tone(tot)}">${signed(tot)} 點</b></div>` : ""}
   </div>
+  ${(() => { const ok = closed.filter(r => r.er != null && r.er < CHASE_ER), bad = closed.filter(r => r.er != null && r.er >= CHASE_ER); if (!bad.length) return ""; const s = a => a.reduce((x, r) => x + r.pnl, 0), w = a => a.length ? Math.round(a.filter(r => r.pnl > 0).length / a.length * 100) : 0; return `<p class="note">⛔ 追價單（翻向前 2 小時效率 ≥ ${CHASE_ER}）：${bad.length} 筆，勝率 ${w(bad)}%，合計 <b class="${tone(s(bad))}">${signed(s(bad))} 點</b>｜不追的：${ok.length} 筆，勝率 ${w(ok)}%，合計 <b class="${tone(s(ok))}">${signed(s(ok))} 點</b>（這裡是「翻向就反手」的算法、沒過濾主開關；回測規則見上面說明）</p>`; })()}
   ${(() => { const d = closed.filter(dual); if (!d.length) return ""; const t = d.reduce((a, r) => a + r.pnl, 0), w = d.filter(r => r.pnl > 0).length; return `<p class="note">⭐ 雙重確認（狙擊 3 根內同向）：${d.length} 筆，勝率 ${Math.round(w / d.length * 100)}%，合計 <b class="${tone(t)}">${signed(t)} 點</b></p>`; })()}
   <p class="note">每筆＝在翻向價進場、下一次翻向價出場（反手），最上面一筆是目前持有中的浮動損益。統計範圍是 App 現有的近 12 個交易日 5 分K，沒扣手續費與滑價。</p>`;
 }
@@ -940,6 +941,14 @@ function zsCard(c) {
   const cls = z.dir > 0 ? "up" : z.dir < 0 ? "down" : "neutral";
   const px = c.price ?? z.close;
   const pos = px > z.up ? "在帶狀上方" : px < z.lo ? "在帶狀下方" : "在帶狀裡面";
+  const chase = er => er != null && er >= CHASE_ER;
+  const erTxt = er => (er == null ? "—" : er.toFixed(2));
+  const chaseLine = z.dir && z.flipEr != null
+    ? (chase(z.flipEr)
+      ? `<p class="say chase">⛔ 這次翻向是<b>追價</b>：翻向前 2 小時已經單邊走（效率 ${erTxt(z.flipEr)} ≥ ${CHASE_ER}），回測跳過這種單比較好，<b>這筆不做</b>。</p>`
+      : `<p class="say">✅ 不是追價：翻向前 2 小時在來回震盪（效率 ${erTxt(z.flipEr)} &lt; ${CHASE_ER}）。</p>`)
+    : "";
+  const nowLine = `<p class="note">現在的效率 ${erTxt(z.erNow)}：${chase(z.erNow) ? "⛔ 如果這時候翻向＝追價，不做" : "✅ 如果這時候翻向＝可以做（還要看主開關方向）"}。效率＝近 2 小時（24 根 5 分K）淨走幅 ÷ 來回總走幅，0 是來回震盪、1 是一路單邊。</p>`;
   const flipNeed = z.pending
     ? `⚠ 已有 ${z.pending.count} 根收在帶狀${z.pending.side > 0 ? "上方" : "下方"}，再 ${z.pending.need - z.pending.count} 根收在${z.pending.side > 0 ? "上方" : "下方"}就翻${z.pending.side > 0 ? "多" : "空"}`
     : z.dir < 0 ? `2 根收盤站上上軌 ${fmt(z.up)} 才翻多（還差 ${fmt(z.up - px)} 點）` : z.dir > 0 ? `2 根收盤跌破下軌 ${fmt(z.lo)} 才翻空（還差 ${fmt(px - z.lo)} 點）` : "等收盤穿出任一邊";
@@ -947,12 +956,14 @@ function zsCard(c) {
     <h2>傑哥戰神帶狀（5 分K，近似）</h2>
     <div class="verdict"><span class="side">${z.dir > 0 ? "偏多" : z.dir < 0 ? "偏空" : "未定"}</span><span class="mode">${z.since ? `${fmtDateTime(z.since)} 翻向` : ""}</span></div>
     ${posBadge(z.dir, z.flipPrice, px)}
+    ${chaseLine}
     ${z.dir && z.flipPrice != null ? `<p class="say">🛡 智慧單：移動停利 180 點（初始停損 <b>${fmt(z.flipPrice - z.dir * 180)}</b>）｜${sixTargetHtml(c, z.dir, z.flipPrice)}${c.my?.ce ? (c.my.ce.dir === z.dir ? "｜✅ 順主開關" : "｜⚠️ 逆主開關，回測勝率低，建議不做") : ""}</p>` : ""}
     <div class="dash">
       <div><span>上軌</span><b>${fmt(z.up)}</b></div><div><span>中軌</span><b>${fmt(z.mid)}</b></div>
       <div><span>下軌</span><b>${fmt(z.lo)}</b></div><div><span>現價</span><b>${fmt(px)}｜${pos}</b></div>
     </div>
     <p class="say">${esc(flipNeed)}</p>
+    ${nowLine}
     ${flipTable(z.flips, px, c.my?.sn?.signals)}
     <p class="note">帶狀公式由你的截圖反推（最高價 WMA24／收盤 WMA20／最低價 WMA24），跟原版差約 1～3 點。翻向規則「2 根 5 分K 收在帶狀另一側（中間沒有收回原方向那一側）」：對照傑哥 10/16、10/19 共 10 筆訊號，方向與筆數全部一致，時間多數相同或差 1 根，少數晚 2～5 根。</p>
   </section>`;

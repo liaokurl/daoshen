@@ -141,7 +141,8 @@ function monitor() {
         const was = st.dir;
         st.dir = st.pend; st.pend = 0; st.cnt = 0;
         props.setProperty('zsFlip', JSON.stringify({ t: b.t + 300000, side: st.dir, px: b.c, ce: (JSON.parse(props.getProperty('ce') || '{}').dir || 0) }));
-        if (!first) notify_(entryTitle_(st.dir, b.c), entryBody_(st.dir, b.c, timeTxt, up, lo, props, d, b.t + 300000), st.dir > 0 ? 'red_circle' : 'green_circle', 5);
+        const er = effRatio_(bars.slice(0, i + 1).map(x => x.c));
+        if (!first) notify_((er != null && er >= CHASE_ER ? '⛔ 追價別進｜' : '') + entryTitle_(st.dir, b.c), entryBody_(st.dir, b.c, timeTxt, up, lo, props, d, b.t + 300000, er), st.dir > 0 ? 'red_circle' : 'green_circle', 5);
       } else if (!first && NOTIFY_WARN && st.pend && st.cnt === 1) {
         notify_(`預警｜帶狀可能翻${st.pend > 0 ? '多' : '空'}`, `${timeTxt} 第 1 根收在帶狀${st.pend > 0 ? '上方' : '下方'}，再 1 根就翻向\n微台 ${fmt_(b.c)}`, 'warning', 3);
       }
@@ -157,6 +158,19 @@ function monitor() {
   }
 }
 
+// 追價濾網：近 24 根 5 分K 效率＝淨走幅 ÷ 來回總走幅。回測 9/2～10/30：效率 ≥ 0.2 才翻向的單拿掉後，停利 180 由 −131 → +1,971 點、最大回落 −2,037 → −855
+const CHASE_ER = 0.2, CHASE_BARS = 24;
+function effRatio_(closes) {
+  const n = closes.length; if (n <= CHASE_BARS) return null;
+  let s = 0; for (let k = n - CHASE_BARS; k < n; k++) s += Math.abs(closes[k] - closes[k - 1]);
+  return s ? Math.abs(closes[n - 1] - closes[n - 1 - CHASE_BARS]) / s : 0;
+}
+function chaseLine_(er) {
+  if (er == null) return '';
+  return er >= CHASE_ER
+    ? '⛔ 追價：翻向前 2 小時已單邊走（效率 ' + er.toFixed(2) + ' ≥ ' + CHASE_ER + '），回測跳過比較好，這筆不做'
+    : '✅ 不是追價（翻向前 2 小時來回震盪，效率 ' + er.toFixed(2) + '）';
+}
 function wma_(arr, n) { let a = 0; for (let k = 0; k < n; k++) a += arr[arr.length - 1 - k] * (n - k); return a / (n * (n + 1) / 2); }
 function fmt_(v) { return Math.round(v).toLocaleString('en-US'); }
 
@@ -300,12 +314,20 @@ function ceUpdate_(d, props) {
     const timeTxt = Utilities.formatDate(new Date(last.t + H), 'Asia/Taipei', 'MM/dd HH:mm');
     const line = e.dir > 0 ? e.longStop : e.shortStop;
     notify_(`🔔 主開關轉${e.dir > 0 ? '多' : '空'}｜微台 ${fmt_(last.c)}`,
-      `${timeTxt} 60 分K 收盤${e.dir > 0 ? '站上空方防守線' : '跌破多方防守線'}\n之後只找${e.dir > 0 ? '多' : '空'}單；60 分K 收盤${e.dir > 0 ? '跌破' : '站上'} ${fmt_(line)} 才再轉向`,
+      `${timeTxt} 60 分K 收盤${e.dir > 0 ? '站上空方防守線' : '跌破多方防守線'}\n之後只找${e.dir > 0 ? '多' : '空'}單；60 分K 收盤${e.dir > 0 ? '跌破' : '站上'} ${fmt_(line)} 才再轉向` + reentryLine_(e.dir, props),
       e.dir > 0 ? 'red_circle' : 'green_circle', 5);
   }
   st.bars = bars; st.dir = e.dir; st.lastT = last.t;
   props.setProperty('ce', JSON.stringify(st));
   try { swingNotify_(bars, 60, props); } catch (err) { console.warn('前低檢查失敗：' + err); }
+}
+
+/** 主開關轉向時，傑哥帶狀如果已經同方向＝補進場；順便判斷是不是追價 */
+function reentryLine_(dir, props) {
+  const zs = JSON.parse(props.getProperty('zs') || '{}');
+  if (zs.dir !== dir || !zs.bars) return '';
+  const er = effRatio_(zs.bars.map(x => x.c));
+  return '\n\n傑哥帶狀已經同方向' + (er != null && er >= CHASE_ER ? '，但' + chaseLine_(er).replace('⛔ 追價：', '⛔ 屬於追價：') : '→ 可補進場\n' + chaseLine_(er));
 }
 
 /** 在編輯器執行：看主開關目前狀態（不推播） */
@@ -358,10 +380,11 @@ function setupTelegram() {
 // 目標用固定點數：回測 9/2～10/19 微台 5 分K，只做順主開關的翻向時，+20 點達標率約 90%、+80 點約 59%（未達標就在下一次反向翻時出場）
 const TP1 = 20, TP2 = 80, TRAIL = 180;   // 回測（9/2～10/20，順主開關）：移動停利 180 合計 +1,621 點、140 合計 +2,866 點
 function entryTitle_(dir, px) { return (dir > 0 ? '🔴 進場多單 ' : '🟢 進場空單 ') + fmt_(px); }
-function entryBody_(dir, px, timeTxt, up, lo, props, d, at) {
+function entryBody_(dir, px, timeTxt, up, lo, props, d, at, er) {
   const ce = JSON.parse(props.getProperty('ce') || '{}').dir || 0;
   const with_ = ce === dir;
   return [
+    chaseLine_(er),
     '🛡 智慧單：移動停利 ' + TRAIL + ' 點（初始停損 ' + fmt_(px - dir * TRAIL) + '）',
     targetLine_(dir, px, d, at),
     (with_ ? '✅ 順主開關（60 分K 吊燈＝' : '⚠️ 逆主開關（60 分K 吊燈＝') + (ce > 0 ? '多' : ce < 0 ? '空' : '未定') + '）' + (with_ ? '' : '，回測逆勢這側勝率低，建議不做'),

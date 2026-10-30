@@ -170,6 +170,7 @@ details.card > .inner { padding: 0 16px 16px; }
 .sword.up .side { color: var(--up); } .sword.down .side { color: var(--down); } .sword.mixed .side { color: var(--mix); }
 .verdict .mode { font-size: 17px; font-weight: 700; }
 .say { margin: 8px 0 12px; font-size: 15px; }
+.say.chase { background: var(--mix-soft, rgba(220,150,0,.15)); border-left: 4px solid var(--mix, #d98a00); padding: 8px 10px; border-radius: 6px; }
 .swords { display: grid; gap: 6px; }
 .sword-row { display: grid; grid-template-columns: 78px 1fr 1fr; gap: 8px; align-items: center; padding: 10px; border-radius: 12px; background: var(--bg); }
 .sword-row .who b { display: block; font-size: 17px; }
