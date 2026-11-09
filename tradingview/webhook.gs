@@ -105,6 +105,7 @@ function monitor() {
     const d = chartData_('WTM&');
     if (d.error) return;
     const props = PropertiesService.getScriptProperties();
+    try { remindTick_(props); } catch (err) { console.warn('重複提醒失敗：' + err); }
     try { rollFix_(props); } catch (err) { console.warn('換月處理失敗：' + err); }
     const st = JSON.parse(props.getProperty('zs') || '{"bars":[],"dir":0,"pend":0,"cnt":0,"lastT":0}');
     // 1 分K → 5 分K（Yahoo 時間是分鐘結束）
@@ -142,7 +143,12 @@ function monitor() {
         st.dir = st.pend; st.pend = 0; st.cnt = 0;
         props.setProperty('zsFlip', JSON.stringify({ t: b.t + 300000, side: st.dir, px: b.c, ce: (JSON.parse(props.getProperty('ce') || '{}').dir || 0) }));
         const er = effRatio_(bars.slice(0, i + 1).map(x => x.c));
-        if (!first) notify_((er != null && er >= CHASE_ER ? '⛔ 追價別進｜' : '') + entryTitle_(st.dir, b.c), entryBody_(st.dir, b.c, timeTxt, up, lo, props, d, b.t + 300000, er), st.dir > 0 ? 'red_circle' : 'green_circle', 5);
+        if (!first) {
+          const title = (er != null && er >= CHASE_ER ? '⛔ 追價別進｜' : '') + entryTitle_(st.dir, b.c), body = entryBody_(st.dir, b.c, timeTxt, up, lo, props, d, b.t + 300000, er);
+          notify_(title, body, st.dir > 0 ? 'red_circle' : 'green_circle', 5);
+          const ce = JSON.parse(props.getProperty('ce') || '{}').dir || 0;
+          if (ce === st.dir && er != null && er < CHASE_ER) entryAlert_(props, st.dir, b.c, body);
+        }
       } else if (!first && NOTIFY_WARN && st.pend && st.cnt === 1) {
         notify_(`預警｜帶狀可能翻${st.pend > 0 ? '多' : '空'}`, `${timeTxt} 第 1 根收在帶狀${st.pend > 0 ? '上方' : '下方'}，再 1 根就翻向\n微台 ${fmt_(b.c)}`, 'warning', 3);
       }
@@ -171,6 +177,44 @@ function chaseLine_(er) {
     ? '⛔ 追價：翻向前 2 小時已單邊走（效率 ' + er.toFixed(2) + ' ≥ ' + CHASE_ER + '），回測跳過比較好，這筆不做'
     : '✅ 不是追價（翻向前 2 小時來回震盪，效率 ' + er.toFixed(2) + '）';
 }
+// ================= 「要下單」群組：只收照 SOP 的進場（順主開關＋不追價），每分鐘再提醒，共 3 次 =================
+// 設定：Telegram 開一個新群組（例如「⚡ 刀神要下單」），把機器人拉進去，在群組裡傳 /setentry，回 Apps Script 執行 setupEntryGroup
+const ENTRY_REPEAT = 3;
+function entryChat_() { return PropertiesService.getScriptProperties().getProperty('tgEntryChat'); }
+function tgSendTo_(chat, html) {
+  if (!TG_TOKEN || !chat) return;
+  UrlFetchApp.fetch('https://api.telegram.org/bot' + TG_TOKEN + '/sendMessage', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    payload: JSON.stringify({ chat_id: chat, text: html, parse_mode: 'HTML', disable_web_page_preview: true }),
+  });
+}
+function entryAlert_(props, dir, px, body) {
+  const chat = entryChat_();
+  if (!chat) return;
+  const head = (dir > 0 ? '🚨🔴 要下單：做多 ' : '🚨🟢 要下單：做空 ') + fmt_(px);
+  tgSendTo_(chat, '<b>' + esc_(head) + '</b>\n' + esc_(body) + '\n<a href="' + APP_URL + '">打開 App</a>');
+  props.setProperty('remind', JSON.stringify({ head: head, left: ENTRY_REPEAT - 1, n: 1, at: Date.now() }));
+}
+function remindTick_(props) {
+  const r = JSON.parse(props.getProperty('remind') || 'null');
+  if (!r || r.left <= 0) return;
+  if (Date.now() - r.at < 50000) return;   // 每分鐘一次
+  r.n += 1; r.left -= 1; r.at = Date.now();
+  tgSendTo_(entryChat_(), '<b>⏰ 第 ' + r.n + ' 次提醒｜' + esc_(r.head) + '</b>\n（智慧單：移動停利 ' + TRAIL + ' 點）');
+  props.setProperty('remind', JSON.stringify(r));
+}
+/** 在編輯器執行：抓「傳了 /setentry 的群組」當要下單群組 */
+function setupEntryGroup() {
+  const res = UrlFetchApp.fetch('https://api.telegram.org/bot' + TG_TOKEN + '/getUpdates', { muteHttpExceptions: true });
+  const ups = (JSON.parse(res.getContentText()).result || []).filter(u => u.message && u.message.chat && /\/setentry/.test(u.message.text || ''));
+  if (!ups.length) { console.log('找不到：請先在新群組裡傳 /setentry，再執行一次'); return; }
+  const id = String(ups[ups.length - 1].message.chat.id);
+  PropertiesService.getScriptProperties().setProperty('tgEntryChat', id);
+  tgSendTo_(id, '<b>✅ 這個群組設定完成</b>\n之後只有「照 SOP 要下單」的訊號會發到這裡，並每分鐘再提醒，共 ' + ENTRY_REPEAT + ' 次。');
+  console.log('要下單群組：' + id);
+}
+/** 在編輯器執行：測試要下單群組（會發 3 次） */
+function testEntryAlert() { entryAlert_(PropertiesService.getScriptProperties(), 1, 40045, '【測試】順主開關＋不是追價'); }
 function wma_(arr, n) { let a = 0; for (let k = 0; k < n; k++) a += arr[arr.length - 1 - k] * (n - k); return a / (n * (n + 1) / 2); }
 function fmt_(v) { return Math.round(v).toLocaleString('en-US'); }
 
@@ -327,6 +371,7 @@ function reentryLine_(dir, props) {
   const zs = JSON.parse(props.getProperty('zs') || '{}');
   if (zs.dir !== dir || !zs.bars) return '';
   const er = effRatio_(zs.bars.map(x => x.c));
+  if (er != null && er < CHASE_ER) { const last = zs.bars[zs.bars.length - 1]; try { entryAlert_(props, dir, last.c, '主開關轉' + (dir > 0 ? '多' : '空') + '，傑哥帶狀已同方向＝補進場\n' + chaseLine_(er)); } catch (err) { console.warn(err); } }
   return '\n\n傑哥帶狀已經同方向' + (er != null && er >= CHASE_ER ? '，但' + chaseLine_(er).replace('⛔ 追價：', '⛔ 屬於追價：') : '→ 可補進場\n' + chaseLine_(er));
 }
 
