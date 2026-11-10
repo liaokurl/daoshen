@@ -85,6 +85,12 @@ export function nextTradingDate(ymd, calendar = []) {
 }
 
 export function prevTradingDate(ymd, calendar = []) {
+  // 日曆只涵蓋到「已有資料的最後一天」；比那天還新的日期改用平日規則估，
+  // 否則日盤官方資料還沒進來時，今晚夜盤會被誤判成前一個交易日的夜盤（11/10 夜盤被當成 11/09）
+  const maxCal = calendar.reduce((m, d) => (d > m ? d : m), "");
+  let w = addDays(ymd, -1);
+  while (weekdayOf(w) === 0 || weekdayOf(w) === 6) w = addDays(w, -1);
+  if (!maxCal || w > maxCal) return w;
   const list = calendar.filter(d => d < ymd);
   if (list.length) return list[list.length - 1];
   let d = addDays(ymd, -1);
