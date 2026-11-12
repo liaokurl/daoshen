@@ -226,6 +226,58 @@ export function effRatio(C, i, w = CHASE_BARS) {
   for (let k = i - w + 1; k <= i; k += 1) s += Math.abs(C[k] - C[k - 1]);
   return s ? Math.abs(C[i] - C[i - w]) / s : 0;
 }
+/** 五線（均線加減碼）：SMA 5／10／20／60／120／240，從短到長連續幾條「收盤在線上＋線上揚（收盤 > n 根前收盤）」＝幾線多（空方反過來）。
+ *  下單邏輯（使用者指定）：三線進場 1 口 → 四線加碼到 2 口（最多 2 口）→ 五線／全線只提示；
+ *  收盤破 5MA＝減碼 1 口（只剩 1 口時續抱）；收盤破 10MA＝出清；出現反向三線＝出清後反手。
+ *  回測 9/2～11/10（每口每次扣 5 點）：936 筆、勝率 30%、−3,660 點、最大回落 −12,678 → 先當觀察紀錄，不建議真的下單。 */
+export const FIVE_LENS = [5, 10, 20, 60, 120, 240];
+const FIVE_NAME = ["", "", "", "三線", "四線", "五線", "全線"];
+export function fiveCount(C, i, side) {
+  let k = 0;
+  for (const n of FIVE_LENS) { let s = 0; for (let j = i - n + 1; j <= i; j += 1) s += C[j]; const m = s / n, up = C[i] > C[i - n]; if (side > 0 ? C[i] > m && up : C[i] < m && !up) k += 1; else break; }
+  return k;
+}
+/** 推進一根 K：pos＝{side, lots:[進場價], lvl, cut, t0, real, hinted}；回傳事件 */
+export function fiveStep(pos, C, i, t) {
+  const ev = [], c = C[i], sma = n => { let s = 0; for (let j = i - n + 1; j <= i; j += 1) s += C[j]; return s / n; };
+  const pnlOf = p => p.real + p.lots.reduce((a, e) => a + (c - e) * p.side, 0);
+  if (pos) {
+    const s = pos.side;
+    if ((s > 0 && c < sma(10)) || (s < 0 && c > sma(10))) { ev.push({ k: s > 0 ? "多單出清" : "空單出清", t, p: c, pnl: pnlOf(pos), lots: pos.lots.length, done: { ...pos, exit: c, t1: t, pnl: pnlOf(pos) } }); pos = null; }
+    else if (!pos.cut && ((s > 0 && c < sma(5)) || (s < 0 && c > sma(5)))) {
+      pos.cut = true;
+      if (pos.lots.length === 2) { const e = pos.lots.pop(); pos.real += (c - e) * s; ev.push({ k: "減碼", t, p: c, part: (c - e) * s, lots: 1 }); }
+    }
+  }
+  const up = fiveCount(C, i, 1), dn = fiveCount(C, i, -1);
+  for (const s of [1, -1]) {
+    const k = s > 0 ? up : dn, nm = FIVE_NAME[k] + (s > 0 ? "多" : "空");
+    if (k < 3) continue;
+    if (pos && pos.side !== s) { ev.push({ k: pos.side > 0 ? "多單出清（反手）" : "空單出清（反手）", t, p: c, pnl: pnlOf(pos), lots: pos.lots.length, done: { ...pos, exit: c, t1: t, pnl: pnlOf(pos) } }); pos = null; }
+    if (!pos) { pos = { side: s, lots: k >= 4 ? [c, c] : [c], lvl: k, cut: false, t0: t, real: 0, hinted: k >= 5 }; ev.push({ k: nm + "進場", t, p: c, lots: pos.lots.length, side: s }); if (k >= 5) ev.push({ k: nm + "提示", t, p: c, side: s }); }
+    else if (k > pos.lvl) {
+      if (k >= 4 && pos.lots.length < 2) { pos.lots.push(c); pos.cut = false; ev.push({ k: nm + "加碼", t, p: c, lots: 2, side: s }); }
+      if (k >= 5 && !pos.hinted) { pos.hinted = true; ev.push({ k: nm + "提示", t, p: c, side: s }); }
+      pos.lvl = k;
+    }
+    break;
+  }
+  return { pos, ev, up, dn };
+}
+export function fiveLines(bars) {
+  const C = bars.map(b => b.c), N = C.length;
+  if (N < 242) return null;
+  let pos = null, up = 0, dn = 0; const events = [], trades = [];
+  for (let i = Math.max(241, N - 2400); i < N; i += 1) {
+    const r = fiveStep(pos, C, i, bars[i].end ?? bars[i].t);
+    pos = r.pos; up = r.up; dn = r.dn;
+    for (const e of r.ev) { events.push(e); if (e.done) trades.push(e.done); }
+  }
+  const i = N - 1;
+  const rows = FIVE_LENS.map(n => { let s = 0; for (let j = i - n + 1; j <= i; j += 1) s += C[j]; return { n, ma: s / n, deduct: C[i - n + 1], next: C[i] > C[i - n + 1] ? "上揚" : "下彎" }; });
+  const k = Math.max(up, dn), side = up >= dn ? 1 : -1;
+  return { up, dn, side, count: k, label: k >= 3 ? FIVE_NAME[k] + (side > 0 ? "多" : "空") : `多${up}／空${dn}條`, rows, close: C[i], pos, events: events.slice(-40), trades };
+}
 export function zhanshenBand(bars, { upLen = 24, midLen = 20, loLen = 24, confirm = 2 } = {}) {
   const H = bars.map(b => b.h), L = bars.map(b => b.l), C = bars.map(b => b.c);
   const up = wmaArr(H, upLen), mid = wmaArr(C, midLen), lo = wmaArr(L, loLen);
