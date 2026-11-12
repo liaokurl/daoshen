@@ -227,7 +227,7 @@ export function effRatio(C, i, w = CHASE_BARS) {
   return s ? Math.abs(C[i] - C[i - w]) / s : 0;
 }
 /** 五線（均線加減碼）：SMA 5／10／20／60／120／240，從短到長連續幾條「收盤在線上＋線上揚（收盤 > n 根前收盤）」＝幾線多（空方反過來）。
- *  下單邏輯（使用者指定）：三線進場 1 口 → 四線加碼到 2 口（最多 2 口）→ 五線／全線只提示；
+ *  下單邏輯（使用者指定）：用 15 分K；新三線而且跟 60 分K 吊燈同方向才進場 1 口 → 之後收盤 ≥ 四線加碼到 2 口（最多 2 口）→ 五線／全線只提示；
  *  收盤破 5MA＝減碼 1 口（只剩 1 口時續抱）；收盤破 10MA＝出清；出現反向三線＝出清後反手。
  *  回測 9/2～11/10（每口每次扣 5 點）：936 筆、勝率 30%、−3,660 點、最大回落 −12,678 → 先當觀察紀錄，不建議真的下單。 */
 export const FIVE_LENS = [5, 10, 20, 60, 120, 240];
@@ -238,7 +238,7 @@ export function fiveCount(C, i, side) {
   return k;
 }
 /** 推進一根 K：pos＝{side, lots:[進場價], lvl, cut, t0, real, hinted}；回傳事件 */
-export function fiveStep(pos, C, i, t) {
+export function fiveStep(pos, C, i, t, dir) {
   const ev = [], c = C[i], sma = n => { let s = 0; for (let j = i - n + 1; j <= i; j += 1) s += C[j]; return s / n; };
   const pnlOf = p => p.real + p.lots.reduce((a, e) => a + (c - e) * p.side, 0);
   if (pos) {
@@ -253,8 +253,11 @@ export function fiveStep(pos, C, i, t) {
   for (const s of [1, -1]) {
     const k = s > 0 ? up : dn, nm = FIVE_NAME[k] + (s > 0 ? "多" : "空");
     if (k < 3) continue;
-    if (pos && pos.side !== s) { ev.push({ k: pos.side > 0 ? "多單出清（反手）" : "空單出清（反手）", t, p: c, pnl: pnlOf(pos), lots: pos.lots.length, done: { ...pos, exit: c, t1: t, pnl: pnlOf(pos) } }); pos = null; }
-    if (!pos) { pos = { side: s, lots: k >= 4 ? [c, c] : [c], lvl: k, cut: false, t0: t, real: 0, hinted: k >= 5 }; ev.push({ k: nm + "進場", t, p: c, lots: pos.lots.length, side: s }); if (k >= 5) ev.push({ k: nm + "提示", t, p: c, side: s }); }
+    // 新訊號＝上一根還不到三線、這一根才 ≥ 三線；平倉後要等新訊號才再進場
+    const fresh = fiveCount(C, i - 1, s) < 3 && (dir === undefined || dir === s);   // 還要跟主開關（60 分K 吊燈）同方向
+    if (pos && pos.side !== s) { if (!fresh) break; ev.push({ k: pos.side > 0 ? "多單出清（反手）" : "空單出清（反手）", t, p: c, pnl: pnlOf(pos), lots: pos.lots.length, done: { ...pos, exit: c, t1: t, pnl: pnlOf(pos) } }); pos = null; }
+    // 進場一律先 1 口（lvl 記成三線），之後收盤 ≥ 四線才加碼到 2 口
+    if (!pos) { if (!fresh) break; pos = { side: s, lots: [c], lvl: 3, cut: false, t0: t, real: 0, hinted: k >= 5 }; ev.push({ k: nm + "進場", t, p: c, lots: 1, side: s }); if (k >= 5) ev.push({ k: nm + "提示", t, p: c, side: s }); }
     else if (k > pos.lvl) {
       if (k >= 4 && pos.lots.length < 2) { pos.lots.push(c); pos.cut = false; ev.push({ k: nm + "加碼", t, p: c, lots: 2, side: s }); }
       if (k >= 5 && !pos.hinted) { pos.hinted = true; ev.push({ k: nm + "提示", t, p: c, side: s }); }
@@ -264,12 +267,17 @@ export function fiveStep(pos, C, i, t) {
   }
   return { pos, ev, up, dn };
 }
-export function fiveLines(bars) {
+/** bars＝15 分K；bars60＝60 分K（算主開關方向，只在方向相同時才進場） */
+export function fiveLines(bars, bars60 = null) {
   const C = bars.map(b => b.c), N = C.length;
   if (N < 242) return null;
-  let pos = null, up = 0, dn = 0; const events = [], trades = [];
+  const ce = bars60 ? chandelierExit(bars60) : null;
+  let pos = null, up = 0, dn = 0, j = -1; const events = [], trades = [];
   for (let i = Math.max(241, N - 2400); i < N; i += 1) {
-    const r = fiveStep(pos, C, i, bars[i].end ?? bars[i].t);
+    const end = bars[i].end ?? bars[i].t;
+    let dir;
+    if (ce) { while (j + 1 < ce.dirs.length && ce.dirs[j + 1].end <= end) j += 1; dir = j >= 0 ? ce.dirs[j].dir : 0; }
+    const r = fiveStep(pos, C, i, end, dir);
     pos = r.pos; up = r.up; dn = r.dn;
     for (const e of r.ev) { events.push(e); if (e.done) trades.push(e.done); }
   }
@@ -308,9 +316,9 @@ export function chandelierExit(bars, { n = 22, m = 3 } = {}) {
   const H = bars.map(b => b.h), L = bars.map(b => b.l), C = bars.map(b => b.c);
   const a = atr(H, L, C, n), hh = highest(C, n), ll = lowest(C, n);
   let dir = 0, ls = null, ss = null, since = null, flipPrice = null;
-  const flips = [];
+  const flips = [], dirs = [];
   for (let i = 0; i < C.length; i += 1) {
-    if (a[i] == null || hh[i] == null) continue;
+    if (a[i] == null || hh[i] == null) { dirs.push({ end: bars[i].end, dir }); continue; }
     let l = hh[i] - m * a[i], s = ll[i] + m * a[i];
     const pl = ls ?? l, ps = ss ?? s;
     if (i > 0 && C[i - 1] > pl) l = Math.max(l, pl);
@@ -320,8 +328,8 @@ export function chandelierExit(bars, { n = 22, m = 3 } = {}) {
       if (dir !== 0) flips.push({ t: bars[i].end, side: nd, price: C[i] });
       dir = nd; since = bars[i].end; flipPrice = C[i];
     }
-    ls = l; ss = s;
+    ls = l; ss = s; dirs.push({ end: bars[i].end, dir });
   }
   const i = bars.length - 1;
-  return { dir, since, flipPrice, longStop: ls, shortStop: ss, close: C[i], lastEnd: bars[i]?.end, flips: flips.slice(-8), n, m };
+  return { dir, since, flipPrice, longStop: ls, shortStop: ss, close: C[i], lastEnd: bars[i]?.end, flips: flips.slice(-8), dirs, n, m };
 }

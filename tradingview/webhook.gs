@@ -128,11 +128,11 @@ function monitor() {
     st.bars.forEach(b => { byT[b.t] = b; });
     fresh.forEach(b => { byT[b.t] = { t: b.t, h: b.h, l: b.l, c: b.c }; });
     const bars = Object.keys(byT).map(k => byT[k]).sort((a, b) => a.t - b.t).slice(-60);
-    const first = st.lastT === 0;
+    const first = st.lastT === 0, fiveQ = [];
     for (let i = 0; i < bars.length; i++) {
       const b = bars[i];
       if (b.t <= st.lastT || i < 23) continue;
-      try { fivePush_(props, b); } catch (err) { console.warn('五線收盤累加失敗：' + err); }
+      fiveQ.push(b);   // 五線等主開關（60 分K 吊燈）更新完再算
       const win = bars.slice(i - 23, i + 1);
       const up = wma_(win.map(x => x.h), 24), lo = wma_(win.map(x => x.l), 24);
       const raw = b.c > up ? 1 : b.c < lo ? -1 : 0;
@@ -158,6 +158,7 @@ function monitor() {
     st.bars = bars.slice(-40);
     props.setProperty('zs', JSON.stringify(st));
     ceUpdate_(d, props);
+    fiveQ.forEach(b => { try { fivePush_(props, b); } catch (err) { console.warn('五線收盤累加失敗：' + err); } });
     try { h30Update_(d, props); } catch (err) { console.warn('30 分K 更新失敗：' + err); }
     try { springMinutes_(d, props); } catch (err) { console.warn('破底翻 5／15 分失敗：' + err); }
   } finally {
@@ -178,18 +179,20 @@ function chaseLine_(er) {
     ? '⛔ 追價：翻向前 2 小時已單邊走（效率 ' + er.toFixed(2) + ' ≥ ' + CHASE_ER + '），回測跳過比較好，這筆不做'
     : '✅ 不是追價（翻向前 2 小時來回震盪，效率 ' + er.toFixed(2) + '）';
 }
-// ================= 五線（均線加減碼）：獨立策略，只發到原本群組（回測為負，先觀察） =================
+// ================= 五線（均線加減碼）：獨立策略，只發到原本群組（先觀察） =================
+// 2026/11/13 改版：用 15 分K 算、只做 60 分K 吊燈（主開關）方向、新三線才進場、進場一律 1 口。
+// 回測 9/2～11/12（每口每次扣 5 點）：166 筆、勝率 31%、+10,467 點、最大回落 −2,826；前半段只 +499，大多來自 11 月趨勢
 // SMA 5／10／20／60／120／240，從短到長連續幾條「收盤在線上＋線上揚（收盤 > n 根前收盤）」＝幾線多
 // 三線進場 1 口 → 四線加碼到 2 口（最多 2 口）→ 五線／全線提示；收盤破 5MA 減碼 1 口（只剩 1 口續抱）；破 10MA 出清；反向三線反手
 // 回測 9/2～11/10（每口每次扣 5 點）：936 筆、勝率 30%、−3,660 點、最大回落 −12,678
-const FIVE_LENS = [5, 10, 20, 60, 120, 240], FIVE_KEEP = 260, NOTIFY_FIVE = true;
+const FIVE_LENS = [5, 10, 20, 60, 120, 240], FIVE_KEEP = 260, NOTIFY_FIVE = true, FIVE_VER = 2, FIVE_MS = 900000;   // 15 分K
 const FIVE_NAME = ['', '', '', '三線', '四線', '五線', '全線'];
 function fiveCount_(C, i, side) {
   let k = 0;
   for (let j = 0; j < FIVE_LENS.length; j++) { const n = FIVE_LENS[j]; let s = 0; for (let x = i - n + 1; x <= i; x++) s += C[x]; const m = s / n, up = C[i] > C[i - n]; if (side > 0 ? C[i] > m && up : C[i] < m && !up) k++; else break; }
   return k;
 }
-function fiveStep_(pos, C, i) {
+function fiveStep_(pos, C, i, dir) {
   const ev = [], c = C[i], sma = n => { let s = 0; for (let x = i - n + 1; x <= i; x++) s += C[x]; return s / n; };
   const pnlOf = p => p.real + p.lots.reduce((a, e) => a + (c - e) * p.side, 0);
   if (pos) {
@@ -204,8 +207,9 @@ function fiveStep_(pos, C, i) {
   for (const sd of [1, -1]) {
     const k = sd > 0 ? up : dn, nm = FIVE_NAME[k] + (sd > 0 ? '多' : '空');
     if (k < 3) continue;
-    if (pos && pos.side !== sd) { ev.push({ k: (pos.side > 0 ? '多單' : '空單') + '出清（反手）', p: c, pnl: pnlOf(pos), lots: pos.lots.length }); pos = null; }
-    if (!pos) { pos = { side: sd, lots: k >= 4 ? [c, c] : [c], lvl: k, cut: false, real: 0, hinted: k >= 5 }; ev.push({ k: nm + '進場', p: c, lots: pos.lots.length, side: sd }); if (k >= 5) ev.push({ k: nm + '提示', p: c, side: sd }); }
+    const fresh = fiveCount_(C, i - 1, sd) < 3 && dir === sd;   // 新訊號：上一根還不到三線，而且跟主開關同方向
+    if (pos && pos.side !== sd) { if (!fresh) break; ev.push({ k: (pos.side > 0 ? '多單' : '空單') + '出清（反手）', p: c, pnl: pnlOf(pos), lots: pos.lots.length }); pos = null; }
+    if (!pos) { if (!fresh) break; pos = { side: sd, lots: [c], lvl: 3, cut: false, real: 0, hinted: k >= 5 }; ev.push({ k: nm + '進場', p: c, lots: 1, side: sd }); if (k >= 5) ev.push({ k: nm + '提示', p: c, side: sd }); }
     else if (k > pos.lvl) {
       if (k >= 4 && pos.lots.length < 2) { pos.lots.push(c); pos.cut = false; ev.push({ k: nm + '加碼', p: c, lots: 2, side: sd }); }
       if (k >= 5 && !pos.hinted) { pos.hinted = true; ev.push({ k: nm + '提示', p: c, side: sd }); }
@@ -218,48 +222,57 @@ function fiveStep_(pos, C, i) {
 function fiveSeed_(props) {
   const res = UrlFetchApp.fetch(APP_URL + 'data/bundle.json?t=' + Date.now(), { muteHttpExceptions: true });
   if (res.getResponseCode() !== 200) return null;
-  const B = JSON.parse(res.getContentText());
-  const key = r => r.start + (r.type === 'D' ? '0' : '1');
-  const recs = (B.tmf5 || []).filter(r => r.complete !== false).sort((a, b) => key(a).localeCompare(key(b)));
-  const c = []; let last = null, lastT = 0;
-  recs.forEach(r => {
-    const y = +r.start.slice(0, 4), m = +r.start.slice(4, 6) - 1, d = +r.start.slice(6, 8);
-    const base = Date.UTC(y, m, d, r.type === 'D' ? 0 : 7, r.type === 'D' ? 45 : 0);   // 台北 08:45／15:00
-    r.bars.forEach((b, i) => { last = b ? b[3] : last; if (last != null) { c.push(last); lastT = base + i * 300000; } });
-  });
-  // 用完整歷史默默跑一次，得到目前倉位（不推播）
-  let pos = null;
-  for (let i = 241; i < c.length; i++) pos = fiveStep_(pos, c, i).pos;
-  const f5 = { c: c.slice(-FIVE_KEEP), t: lastT, contract: frontAt_(Date.now()), pos: pos };
+  const recs = (JSON.parse(res.getContentText()).tmf5 || []).filter(r => r.complete !== false);
+  const b15 = ceSeedBars_(recs, 3, FIVE_MS), b60 = ceSeedBars_(recs);
+  if (b15.length < 245 || b60.length < CE_N + 5) return null;
+  const d60 = chandelier_(b60).dirs, c = b15.map(x => x.c);
+  // 每根 15 分K 收盤時，用已收完的最後一根 60 分K 方向
+  let pos = null, j = -1;
+  for (let i = 0; i < b15.length; i++) {
+    const end = b15[i].t + FIVE_MS;
+    while (j + 1 < b60.length && b60[j + 1].t + H <= end) j++;
+    if (i >= 241) pos = fiveStep_(pos, c, i, j >= 0 ? d60[j] : 0).pos;   // 用完整歷史默默跑一次，得到目前倉位（不推播）
+  }
+  const last = b15[b15.length - 1];
+  const f5 = { v: FIVE_VER, c: c.slice(-FIVE_KEEP), t: last.t + FIVE_MS - 300000, contract: frontAt_(Date.now()), pos: pos };
   props.setProperty('f5', JSON.stringify(f5));
   return f5;
 }
+/** 每根收完的 5 分K 呼叫一次；剛好收完一根 15 分K 時才算五線 */
 function fivePush_(props, b) {
   let f5 = JSON.parse(props.getProperty('f5') || 'null');
-  if (!f5 || !f5.c || Date.now() - f5.t > 4 * 24 * H) f5 = fiveSeed_(props);   // 第一次或太久沒更新就從網站資料補齊
+  if (!f5 || !f5.c || f5.v !== FIVE_VER || Date.now() - f5.t > 4 * 24 * H) f5 = fiveSeed_(props);   // 第一次、改版或太久沒更新就從網站資料補齊
   if (!f5 || b.t <= f5.t) return;
+  if ((b.t + 300000) % FIVE_MS !== 0) return;   // 還不是 15 分K 的最後一根
   f5.c.push(b.c); f5.t = b.t; if (f5.c.length > FIVE_KEEP) f5.c = f5.c.slice(-FIVE_KEEP);
   if (f5.c.length > 241) {
-    const r = fiveStep_(f5.pos, f5.c, f5.c.length - 1);
+    const dir = (JSON.parse(props.getProperty('ce') || '{}').dir) || 0;
+    const r = fiveStep_(f5.pos, f5.c, f5.c.length - 1, dir);
     f5.pos = r.pos;
-    if (NOTIFY_FIVE) r.ev.forEach(e => fiveNotify_(e, r.pos, b));
+    if (NOTIFY_FIVE && r.ev.length) fiveNotify_(r.ev, r.pos, b);
   }
   props.setProperty('f5', JSON.stringify(f5));
 }
-function fiveNotify_(e, pos, b) {
+/** 同一根 K 棒的事件合成一則通知（例如：出清＋反手進場、進場＋全線提示） */
+function fiveNotify_(evs, pos, b) {
+  if (!Array.isArray(evs)) evs = [evs];
   const tm = Utilities.formatDate(new Date(b.t + 300000), 'Asia/Taipei', 'HH:mm');
-  const tail = '\n（五線策略：回測勝率 30%、合計為負，僅供觀察紀錄）';
-  const plan = (s, lots) => (lots >= 2 ? '' : '加碼：出現四線' + (s > 0 ? '多' : '空') + '加到 2 口\n') + '減碼：收盤' + (s > 0 ? '跌破' : '站上') + ' 5MA 出 1 口\n出清：收盤' + (s > 0 ? '跌破' : '站上') + ' 10MA 全出';
-  let title, body;
-  if (/進場/.test(e.k)) { title = (e.side > 0 ? '🔴 五線｜' : '🟢 五線｜') + e.k + ' ' + e.lots + ' 口 ' + fmt_(e.p); body = tm + ' 收盤\n' + plan(e.side, e.lots); }
-  else if (/加碼/.test(e.k)) { title = '➕ 五線｜' + e.k + '到 2 口 ' + fmt_(e.p); body = tm + ' 收盤\n' + plan(e.side, 2); }
-  else if (/提示/.test(e.k)) { title = '📣 五線｜' + e.k.replace('提示', '') + ' ' + fmt_(e.p); body = tm + ' 收盤，6 條均線' + (e.k.indexOf('全線') >= 0 ? '全部' : '大多') + '同方向（只提示，不加碼）'; }
-  else if (e.k === '減碼') { title = '➖ 五線｜減碼 1 口 ' + fmt_(e.p); body = tm + ' 收盤破 5MA，這口 ' + (e.part >= 0 ? '+' : '') + Math.round(e.part) + ' 點，剩 1 口'; }
-  else { title = (e.pnl >= 0 ? '✅ 五線｜' : '❌ 五線｜') + e.k + ' ' + fmt_(e.p); body = tm + ' 收盤，本筆合計 ' + (e.pnl >= 0 ? '+' : '') + Math.round(e.pnl) + ' 點（' + e.lots + ' 口持有到最後，含已減碼）'; }
-  notify_(title, body + tail, 'chart', 3);
+  const tail = '\n（五線 15 分K、只做主開關方向：回測 +10,467 點但大多來自 11 月趨勢，觀察中）';
+  const plan = (s, lots) => (lots >= 2 ? '' : '加碼：收盤出現四線' + (s > 0 ? '多' : '空') + '以上加到 2 口\n') + '減碼：收盤' + (s > 0 ? '跌破' : '站上') + ' 5MA 出 1 口\n出清：收盤' + (s > 0 ? '跌破' : '站上') + ' 10MA 全出';
+  const hint = evs.filter(e => /提示/.test(e.k)), main = evs.filter(e => !/提示/.test(e.k));
+  const hintTxt = hint.length ? (hint[0].k.indexOf('全線') >= 0 ? '6 條均線全部同方向' : '6 條均線大多同方向') + '（只提示，不加碼）' : '';
+  const titles = [], bodies = [];
+  main.forEach(e => {
+    if (/進場/.test(e.k)) { titles.push((e.side > 0 ? '🔴 五線｜' : '🟢 五線｜') + e.k + ' ' + e.lots + ' 口 ' + fmt_(e.p)); bodies.push(plan(e.side, e.lots)); }
+    else if (/加碼/.test(e.k)) { titles.push('➕ 五線｜' + e.k + '到 2 口 ' + fmt_(e.p)); bodies.push(plan(e.side, 2)); }
+    else if (e.k === '減碼') { titles.push('➖ 五線｜減碼 1 口 ' + fmt_(e.p)); bodies.push('收盤破 5MA，這口 ' + (e.part >= 0 ? '+' : '') + Math.round(e.part) + ' 點，剩 1 口'); }
+    else { titles.push((e.pnl >= 0 ? '✅ 五線｜' : '❌ 五線｜') + e.k + ' ' + fmt_(e.p)); bodies.push('本筆合計 ' + (e.pnl >= 0 ? '+' : '') + Math.round(e.pnl) + ' 點（' + e.lots + ' 口持有到最後，含已減碼）'); }
+  });
+  if (!titles.length) { titles.push('📣 五線｜' + hint[0].k.replace('提示', '') + ' ' + fmt_(hint[0].p)); }
+  if (hintTxt) bodies.push(hintTxt);
+  notify_(titles.join('\n'), tm + ' 15 分K 收盤\n' + bodies.join('\n') + tail, 'chart', 3);
 }
-/** 在編輯器執行：發一則五線測試通知到原本的群組 */
-function testFiveNotify() { fiveNotify_({ k: '四線空進場', p: 43100, lots: 2, side: -1 }, null, { t: Date.now() - 300000 }); }
+function testFiveNotify() { fiveNotify_([{ k: '全線空進場', p: 43100, lots: 1, side: -1 }, { k: '全線空提示', p: 43100, side: -1 }], null, { t: Date.now() - 300000 }); }
 /** 在編輯器執行：看五線目前倉位（第一次會從網站資料補齊） */
 function testFive() { const p = PropertiesService.getScriptProperties(); const f5 = fiveSeed_(p); console.log('收盤數 ' + (f5 ? f5.c.length : 0) + '｜倉位 ' + JSON.stringify(f5 && f5.pos)); }
 
@@ -389,14 +402,14 @@ function ceSeedBars_(recs, per, span) {
 function chandelier_(bars) {
   const n = CE_N, m = CE_M, C = bars.map(b => b.c);
   let atr = null, trSum = 0, trCnt = 0, dir = 0, ls = null, ss = null;
-  const flips = [];
+  const flips = [], dirs = [];
   for (let i = 0; i < bars.length; i++) {
     if (i > 0) {
       const tr = Math.max(bars[i].h - bars[i].l, Math.abs(bars[i].h - C[i - 1]), Math.abs(bars[i].l - C[i - 1]));
       if (atr == null) { trSum += tr; trCnt++; if (trCnt === n) atr = trSum / n; }
       else atr = (tr + (n - 1) * atr) / n;
     }
-    if (atr == null || i < n - 1) continue;
+    if (atr == null || i < n - 1) { dirs.push(dir); continue; }
     const win = C.slice(i - n + 1, i + 1);
     let l = Math.max.apply(null, win) - m * atr, s = Math.min.apply(null, win) + m * atr;
     const pl = ls == null ? l : ls, ps = ss == null ? s : ss;
@@ -404,9 +417,9 @@ function chandelier_(bars) {
     if (C[i - 1] < ps) s = Math.min(s, ps);
     const nd = C[i] > ps ? 1 : C[i] < pl ? -1 : (dir || (C[i] >= (l + s) / 2 ? 1 : -1));
     if (nd !== dir) { if (dir !== 0) flips.push({ t: bars[i].t, side: nd, price: C[i] }); dir = nd; }
-    ls = l; ss = s;
+    ls = l; ss = s; dirs.push(dir);
   }
-  return { dir: dir, longStop: ls, shortStop: ss, flips: flips };
+  return { dir: dir, longStop: ls, shortStop: ss, flips: flips, dirs: dirs };
 }
 
 /** 每分鐘：把 Yahoo 1 分K 併成已收完的 60 分K，算吊燈，轉向就推播 */

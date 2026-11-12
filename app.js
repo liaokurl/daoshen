@@ -112,7 +112,7 @@ function compute() {
     const asOf5 = liveTmf && B.tmfLive?.lastBarTime ? B.tmfLive.lastBarTime + 60_000 : (all5.at(-1)?.end ?? 0);
     const done5 = all5.filter(b => b.end <= asOf5);
     b5 = done5;
-    if (done5.length > 100) my = { sn: proSniper(done5), wo: washout(done5), zs: zhanshenBand(done5), five: fiveLines(done5), ce: chandelierExit(aggregate(done5, 60).filter(b => !b.partial)), sw60: swingLows(aggregate(done5, 60).filter(b => !b.partial)), sw30: swingLows(aggregate(done5, 30).filter(b => !b.partial)), last: done5.at(-1), live: Boolean(liveTmf), src: B.tmf5.find(s => s.start + s.type === done5.at(-1).key)?.source };
+    if (done5.length > 100) my = { sn: proSniper(done5), wo: washout(done5), zs: zhanshenBand(done5), five: fiveLines(aggregate(done5, 15).filter(b => !b.partial), aggregate(done5, 60).filter(b => !b.partial)), ce: chandelierExit(aggregate(done5, 60).filter(b => !b.partial)), sw60: swingLows(aggregate(done5, 60).filter(b => !b.partial)), sw30: swingLows(aggregate(done5, 30).filter(b => !b.partial)), last: done5.at(-1), live: Boolean(liveTmf), src: B.tmf5.find(s => s.start + s.type === done5.at(-1).key)?.source };
   }
   return { B, bars15: completeBars, daily, analysis, plan, planIsLive, revision, price, autoPrice, manual, prevClose, chgLabel, dataAsOf, liveNow, R, now, sw, tt, summary, pcr, kg, my, b5 };
 }
@@ -979,7 +979,7 @@ function fiveCard(c) {
   const cls = p ? (p.side > 0 ? "up" : "down") : "neutral";
   const avg = p ? p.lots.reduce((a, x) => a + x, 0) / p.lots.length : null;
   const open = p ? p.real + p.lots.reduce((a, e) => a + (px - e) * p.side, 0) : null;
-  const badge = p ? `<div class="pos ${p.side > 0 ? "long" : "short"}"><span class="k">${p.side > 0 ? "持有多單" : "持有空單"} ${p.lots.length} 口</span><span class="v">均價 ${fmt(avg)}</span><span class="pl">${signed(open)} 點${p.real ? `（已減碼實現 ${signed(p.real)}）` : ""}｜${fmtDateTime(p.t0)} 進場</span></div>` : `<div class="pos flat"><span class="k">空手</span><span class="pl">等三線多／三線空再進場</span></div>`;
+  const badge = p ? `<div class="pos ${p.side > 0 ? "long" : "short"}"><span class="k">${p.side > 0 ? "持有多單" : "持有空單"} ${p.lots.length} 口</span><span class="v">均價 ${fmt(avg)}</span><span class="pl">${signed(open)} 點${p.real ? `（已減碼實現 ${signed(p.real)}）` : ""}｜${fmtDateTime(p.t0)} 進場</span></div>` : `<div class="pos flat"><span class="k">空手</span><span class="pl">等新的三線、而且跟主開關同方向再進場</span></div>`;
   const nextStep = p ? (p.lots.length < 2 && !p.cut ? `出現四線${p.side > 0 ? "多" : "空"}就加碼到 2 口；` : "") + `收盤${p.side > 0 ? "跌破" : "站上"} 5MA（${fmt(f.rows[0].ma)}）${p.lots.length === 2 && !p.cut ? "減碼 1 口" : "（已減碼或只有 1 口，續抱）"}；${p.side > 0 ? "跌破" : "站上"} 10MA（${fmt(f.rows[1].ma)}）出清` : "";
   const T = f.trades, tot = T.reduce((a, t) => a + t.pnl, 0), win = T.filter(t => t.pnl > 0).length;
   const trow = t => `<div class="fr"><span>${fmtDateTime(t.t0)}</span><span class="${t.side > 0 ? "t-up" : "t-down"}">${t.side > 0 ? "多" : "空"} ${fmt(t.lots.length ? t.lots[0] : t.exit)}→${fmt(t.exit)}</span><b class="${tone(t.pnl)}">${signed(Math.round(t.pnl))} 點</b></div>`;
@@ -987,15 +987,15 @@ function fiveCard(c) {
   const evs = f.events.slice().reverse().slice(0, 8).map(e => `<div class="fr"><span>${fmtDateTime(e.t)}</span><span class="${/多/.test(e.k) && !/出清/.test(e.k) ? "t-up" : /空/.test(e.k) && !/出清/.test(e.k) ? "t-down" : ""}">${esc(e.k)}${e.lots ? (e.k === "減碼" ? "（剩 1 口）" : `（${e.lots} 口）`) : ""}</span><b>${fmt(e.p)}${e.pnl != null ? ` <small class="${tone(e.pnl)}">${signed(Math.round(e.pnl))}</small>` : ""}</b></div>`).join("");
   const rows = f.rows.map(r => `<div class="fr"><span>SMA ${r.n}（${fmt(r.ma)}）</span><span>扣抵 ${fmt(r.deduct)}</span><b class="${r.next === "上揚" ? "t-up" : "t-down"}">${r.next}</b></div>`).join("");
   return `<section class="card sword ${cls}">
-    <h2>五線（均線加減碼，5 分K）</h2>
+    <h2>五線（均線加減碼，15 分K）</h2>
     <div class="verdict"><span class="side">${esc(f.label)}</span><span class="mode">多 ${f.up} 條／空 ${f.dn} 條</span></div>
     ${badge}
     ${nextStep ? `<p class="say">${esc(nextStep)}</p>` : ""}
     ${evs ? `<h3>最近動作</h3><div class="flips">${evs}</div>` : ""}
     ${T.length ? `<h3>每筆損益</h3><div class="flips">${first.map(trow).join("")}${rest.length ? `<details class="more-flips"><summary>顯示其他 ${rest.length} 筆</summary><div class="flips">${rest.map(trow).join("")}</div></details>` : ""}<div class="fr sum"><span>已結算 ${T.length} 筆</span><span>勝率 ${Math.round(win / T.length * 100)}%</span><b class="${tone(tot)}">${signed(Math.round(tot))} 點</b></div></div>` : ""}
     <h3>均線扣抵</h3><div class="flips">${rows}</div>
-    <p class="note">規則：從 5MA 往長數，連續幾條「收盤在線上、線也向上」＝幾線多（三線＝5/10/20，四線＋60，全線＝6 條）。三線進場 1 口、四線加碼到 2 口（最多 2 口）、五線／全線只提示；收盤破 5MA 減碼 1 口（只剩 1 口續抱），破 10MA 出清，反向三線就反手。損益是點數合計（2 口就算 2 倍），沒扣手續費。扣抵＝下一根收完會丟掉的那根收盤，現價高於扣抵均線就上揚。</p>
-    <p class="note">⚠️ 回測 9/2～11/10（每口每次扣 5 點）：936 筆、勝率 30%、−3,660 點、最大回落 −12,678，比傑哥 SOP 差很多，建議先看紀錄、不要真的照著下單。</p>
+    <p class="note">規則：從 5MA 往長數，連續幾條「收盤在線上、線也向上」＝幾線多（三線＝5/10/20，四線＋60，全線＝6 條）。用 15 分K 算；新出現的三線、而且跟多空主開關（60 分K 吊燈）同方向才進場，進場一律先 1 口；之後收盤 ≥ 四線加碼到 2 口（最多 2 口）、五線／全線只提示；收盤破 5MA 減碼 1 口（只剩 1 口續抱），破 10MA 出清；反向新三線（也要跟主開關同方向）就反手。損益是點數合計（2 口就算 2 倍），沒扣手續費。扣抵＝下一根收完會丟掉的那根收盤，現價高於扣抵均線就上揚。</p>
+    <p class="note">回測 9/2～11/12（每口每次扣 5 點）：166 筆、勝率 31%、+10,467 點、最大回落 −2,826（舊版 5 分K 不過濾：936 筆、−3,068 點）。⚠️ 前半段只 +499，賺的大多來自 11 月這波趨勢，資料只有兩個多月，先看紀錄、不要真的照著下單。</p>
   </section>`;
 }
 
