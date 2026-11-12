@@ -258,6 +258,8 @@ function fiveNotify_(e, pos, b) {
   else { title = (e.pnl >= 0 ? '✅ 五線｜' : '❌ 五線｜') + e.k + ' ' + fmt_(e.p); body = tm + ' 收盤，本筆合計 ' + (e.pnl >= 0 ? '+' : '') + Math.round(e.pnl) + ' 點（' + e.lots + ' 口持有到最後，含已減碼）'; }
   notify_(title, body + tail, 'chart', 3);
 }
+/** 在編輯器執行：發一則五線測試通知到原本的群組 */
+function testFiveNotify() { fiveNotify_({ k: '四線空進場', p: 43100, lots: 2, side: -1 }, null, { t: Date.now() - 300000 }); }
 /** 在編輯器執行：看五線目前倉位（第一次會從網站資料補齊） */
 function testFive() { const p = PropertiesService.getScriptProperties(); const f5 = fiveSeed_(p); console.log('收盤數 ' + (f5 ? f5.c.length : 0) + '｜倉位 ' + JSON.stringify(f5 && f5.pos)); }
 
