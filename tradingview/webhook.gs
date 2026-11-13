@@ -32,8 +32,9 @@ function chartData_(symbol, doneOnly) {
   if (res.getResponseCode() !== 200) return { error: 'HTTP ' + res.getResponseCode() };
   const j = JSON.parse(res.getContentText());
   if (doneOnly && j.timestamp) {   // 監控用：拿掉還沒走完的最後 1 分K（時間標的是分鐘結束），收盤才不會提早 1 分鐘算
-    const now = Date.now() / 1000, q0 = j.indicators.quote[0];
-    let n = j.timestamp.length; while (n > 0 && j.timestamp[n - 1] > now) n--;
+    const now = Date.now(), q0 = j.indicators.quote[0];
+    // 週五夜盤 Yahoo 會把時間標成週日／週一，要先用 fixYahoo_ 拉回來再比，不然整個夜盤都被當成未來丟掉
+    let n = j.timestamp.length; while (n > 0 && fixYahoo_(j.timestamp[n - 1] * 1000 - 60000) + 60000 > now) n--;
     j.timestamp = j.timestamp.slice(0, n); ['open', 'high', 'low', 'close', 'volume'].forEach(k => { if (q0[k]) q0[k] = q0[k].slice(0, n); });
   }
   // 只回傳 App 需要的欄位，縮小傳輸量
@@ -135,11 +136,11 @@ function monitor() {
     st.bars.forEach(b => { byT[b.t] = b; });
     fresh.forEach(b => { byT[b.t] = { t: b.t, h: b.h, l: b.l, c: b.c }; });
     const bars = Object.keys(byT).map(k => byT[k]).sort((a, b) => a.t - b.t).slice(-60);
-    const first = st.lastT === 0, fiveQ = [];
+    const first = st.lastT === 0, fiveQ = fresh.filter(b => b.t > st.lastT);   // 五線用整段新 K 棒（等主開關更新完再算），中間漏掉的也補上
     for (let i = 0; i < bars.length; i++) {
       const b = bars[i];
       if (b.t <= st.lastT || i < 23) continue;
-      fiveQ.push(b);   // 五線等主開關（60 分K 吊燈）更新完再算
+      const quiet = first || fixYahoo_(b.t) + 300000 < Date.now() - 15 * 60000;   // 補算超過 15 分鐘前的 K 棒：只更新狀態，不補發舊通知
       const win = bars.slice(i - 23, i + 1);
       const up = wma_(win.map(x => x.h), 24), lo = wma_(win.map(x => x.l), 24);
       const raw = b.c > up ? 1 : b.c < lo ? -1 : 0;
@@ -151,13 +152,13 @@ function monitor() {
         st.dir = st.pend; st.pend = 0; st.cnt = 0;
         props.setProperty('zsFlip', JSON.stringify({ t: b.t + 300000, side: st.dir, px: b.c, ce: (JSON.parse(props.getProperty('ce') || '{}').dir || 0) }));
         const er = effRatio_(bars.slice(0, i + 1).map(x => x.c));
-        if (!first) {
+        if (!quiet) {
           const title = (er != null && er >= CHASE_ER ? '⛔ 追價別進｜' : '') + entryTitle_(st.dir, b.c), body = entryBody_(st.dir, b.c, timeTxt, up, lo, props, d, b.t + 300000, er);
           notify_(title, body, st.dir > 0 ? 'red_circle' : 'green_circle', 5);
           const ce = JSON.parse(props.getProperty('ce') || '{}').dir || 0;
           if (ce === st.dir && er != null && er < CHASE_ER) entryAlert_(props, st.dir, b.c, body);
         }
-      } else if (!first && NOTIFY_WARN && st.pend && st.cnt === 1) {
+      } else if (!quiet && NOTIFY_WARN && st.pend && st.cnt === 1) {
         notify_(`預警｜帶狀可能翻${st.pend > 0 ? '多' : '空'}`, `${timeTxt} 第 1 根收在帶狀${st.pend > 0 ? '上方' : '下方'}，再 1 根就翻向\n微台 ${fmt_(b.c)}`, 'warning', 3);
       }
       st.lastT = b.t;
@@ -256,7 +257,7 @@ function fivePush_(props, b) {
     const dir = (JSON.parse(props.getProperty('ce') || '{}').dir) || 0;
     const r = fiveStep_(f5.pos, f5.c, f5.c.length - 1, dir);
     f5.pos = r.pos;
-    if (NOTIFY_FIVE && r.ev.length) fiveNotify_(r.ev, r.pos, b);
+    if (NOTIFY_FIVE && r.ev.length && fixYahoo_(b.t) + 300000 > Date.now() - 20 * 60000) fiveNotify_(r.ev, r.pos, b);   // 補算的舊 K 棒不發
   }
   props.setProperty('f5', JSON.stringify(f5));
 }
