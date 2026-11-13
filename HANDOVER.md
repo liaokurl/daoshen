@@ -22,7 +22,7 @@
 
 - Apps Script 裡只放 `tradingview/loader.gs`（固定不變）。每次執行都去 GitHub 抓最新的 `tradingview/webhook.gs` 來跑（快取 5 分鐘；抓不到就用最近一次的版本，最多 6 小時）。
 - **所以改 Telegram／監控邏輯＝只要改 `tradingview/webhook.gs` 並 push，最慢 5 分鐘自動生效**，不用貼程式、不用部署。
-- 密碼 KEY、TG_TOKEN 存在 Apps Script「指令碼屬性」（`KEY`、`TG_TOKEN`），程式裡沒有。群組編號也在屬性裡（`tgChat` 原本群組、`tgEntryChat`「⚡ 要下單」群組）。
+- 密碼 KEY、TG_TOKEN 存在 Apps Script「指令碼屬性」（`KEY`、`TG_TOKEN`），程式裡沒有。原本群組「Liao 和 車干刀神通知」編號 -1003815158569 寫在 webhook.gs 的 TG_CHAT（指令碼屬性 `TG_CHAT` 可覆蓋；群組編號不是密碼，沒權杖發不了訊息）；「⚡ 要下單」群組在屬性 `tgEntryChat`。
 - `appsscript.json` 已設定明確的 oauthScopes（repo 裡有一份 `tradingview/appsscript.json`）。因為程式是動態載入，Google 抓不到用了哪些服務，**如果新程式用到新的 Google 服務（例如 Drive、Gmail 讀信），要先加 scope，而且使用者要重新授權一次**——這種情況才需要請他動手。
 - 載入器只轉接這些函式：monitor、doGet、doPost、setupLoader，以及手動測試用的 testChart、setupMonitor、stopMonitor、testNotify、testFiveNotify、testFive、setupEntryGroup、testEntryAlert、testCe、setupEmail、setupTelegram、testEntry、testRoll。**webhook.gs 新增「需要觸發條件或手動執行」的函式時，才要改 loader.gs**（那時候要請使用者重貼載入器一次），所以盡量用既有函式。
 - webhook.gs 的頂層程式碼每次執行都會跑，不要在頂層做耗時或有副作用的事。

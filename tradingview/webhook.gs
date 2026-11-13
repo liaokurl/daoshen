@@ -75,7 +75,7 @@ const APP_URL = 'https://liaokurl.github.io/daoshen/';
 const NOTIFY_WARN = false;   // true＝第 1 根收在另一側時也先預警
 const NOTIFY_EMAIL = '';      // 也寄 Gmail 的話填你的信箱（留空＝不寄）
 const TG_TOKEN = SECRETS_.getProperty('TG_TOKEN') || '';   // Telegram 機器人權杖（@BotFather 給的），存在指令碼屬性 TG_TOKEN；沒設＝不用 Telegram
-const TG_CHAT = '';           // 指定聊天室／群組編號（群組是負數）；留空＝自動抓最近傳話給機器人的聊天室
+const TG_CHAT = SECRETS_.getProperty('TG_CHAT') || '-1003815158569';   // 原本群組「Liao 和 車干刀神通知」；要換群組改指令碼屬性 TG_CHAT
 
 function setupMonitor() {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'monitor').forEach(t => ScriptApp.deleteTrigger(t));
