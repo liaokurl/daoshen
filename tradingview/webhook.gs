@@ -531,10 +531,19 @@ function entryBody_(dir, px, timeTxt, up, lo, props, d, at, er) {
     '🛡 智慧單：移動停利 ' + TRAIL + ' 點（初始停損 ' + fmt_(px - dir * TRAIL) + '）',
     targetLine_(dir, px, d, at),
     (with_ ? '✅ 順主開關（60 分K 吊燈＝' : '⚠️ 逆主開關（60 分K 吊燈＝') + (ce > 0 ? '多' : ce < 0 ? '空' : '未定') + '）' + (with_ ? '' : '，回測逆勢這側勝率低，建議不做'),
+    fiveAlign_(dir, props),
     '',
     '戰神帶狀 5 分K｜' + timeTxt + ' 收盤確認',
     '上軌 ' + fmt_(up) + '／下軌 ' + fmt_(lo),
   ].join('\n');
+}
+/** 傑哥進場時，五線（15 分K）是不是同方向。回測 9/2～11/12：SOP＋五線 ≥5 條同向勝率 50%、每筆 +82；沒同向的 146 筆合計只 +439 */
+function fiveAlign_(dir, props) {
+  const f5 = JSON.parse(props.getProperty('f5') || 'null');
+  if (!f5 || !f5.c || f5.c.length < 242) return '五線：資料不足';
+  const i = f5.c.length - 1, k = fiveCount_(f5.c, i, dir), o = fiveCount_(f5.c, i, -dir);
+  return k >= 3 ? '✅ 五線同向（' + (FIVE_NAME[k] || k + ' 條') + (dir > 0 ? '多' : '空') + '，15 分K）'
+                : '⚠️ 五線沒同向（' + (dir > 0 ? '多 ' + k + '／空 ' + o : '空 ' + k + '／多 ' + o) + ' 條），回測這種單幾乎不賺';
 }
 function testEntry() { const p = PropertiesService.getScriptProperties(), d = chartData_('WTM&'), px = Number(d.quote && d.quote.price) || 47000; notify_('【測試】' + entryTitle_(1, px), entryBody_(1, px, '測試', px + 20, px - 20, p, d, Date.now()), 'red_circle', 4); }
 

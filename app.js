@@ -957,7 +957,7 @@ function zsCard(c) {
     <div class="verdict"><span class="side">${z.dir > 0 ? "偏多" : z.dir < 0 ? "偏空" : "未定"}</span><span class="mode">${z.since ? `${fmtDateTime(z.since)} 翻向` : ""}</span></div>
     ${posBadge(z.dir, z.flipPrice, px)}
     ${chaseLine}
-    ${z.dir && z.flipPrice != null ? `<p class="say">🛡 智慧單：移動停利 180 點（初始停損 <b>${fmt(z.flipPrice - z.dir * 180)}</b>）｜${sixTargetHtml(c, z.dir, z.flipPrice)}${c.my?.ce ? (c.my.ce.dir === z.dir ? "｜✅ 順主開關" : "｜⚠️ 逆主開關，回測勝率低，建議不做") : ""}</p>` : ""}
+    ${z.dir && z.flipPrice != null ? `<p class="say">🛡 智慧單：移動停利 180 點（初始停損 <b>${fmt(z.flipPrice - z.dir * 180)}</b>）｜${sixTargetHtml(c, z.dir, z.flipPrice)}${c.my?.ce ? (c.my.ce.dir === z.dir ? "｜✅ 順主開關" : "｜⚠️ 逆主開關，回測勝率低，建議不做") : ""}${fiveAlignHtml(c.my?.five, z.dir)}</p>` : ""}
     <div class="dash">
       <div><span>上軌</span><b>${fmt(z.up)}</b></div><div><span>中軌</span><b>${fmt(z.mid)}</b></div>
       <div><span>下軌</span><b>${fmt(z.lo)}</b></div><div><span>現價</span><b>${fmt(px)}｜${pos}</b></div>
@@ -969,6 +969,12 @@ function zsCard(c) {
   </section>`;
 }
 
+// 傑哥翻向時，五線（15 分K）是否同向：回測 SOP＋五線 ≥5 條同向勝率 50%、每筆 +82；沒同向的單合計幾乎不賺
+function fiveAlignHtml(f, dir) {
+  if (!f || !dir) return "";
+  const k = dir > 0 ? f.up : f.dn, o = dir > 0 ? f.dn : f.up;
+  return k >= 3 ? `｜✅ 五線同向（${k} 條）` : `｜⚠️ 五線沒同向（${dir > 0 ? "多" : "空"} ${k}／${dir > 0 ? "空" : "多"} ${o} 條）`;
+}
 // ---------- 五線（均線加減碼）：三線進 1 口、四線加到 2 口、破 5MA 減碼、破 10MA 出清 ----------
 function fiveCard(c) {
   const f = c.my?.five;
