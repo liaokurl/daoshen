@@ -257,7 +257,6 @@ function fivePush_(props, b) {
 function fiveNotify_(evs, pos, b) {
   if (!Array.isArray(evs)) evs = [evs];
   const tm = Utilities.formatDate(new Date(b.t + 300000), 'Asia/Taipei', 'HH:mm');
-  const tail = '\n（五線 15 分K、只做主開關方向：回測 +10,467 點但大多來自 11 月趨勢，觀察中）';
   const plan = (s, lots) => (lots >= 2 ? '' : '加碼：收盤出現四線' + (s > 0 ? '多' : '空') + '以上加到 2 口\n') + '減碼：收盤' + (s > 0 ? '跌破' : '站上') + ' 5MA 出 1 口\n出清：收盤' + (s > 0 ? '跌破' : '站上') + ' 10MA 全出';
   const hint = evs.filter(e => /提示/.test(e.k)), main = evs.filter(e => !/提示/.test(e.k));
   const hintTxt = hint.length ? (hint[0].k.indexOf('全線') >= 0 ? '6 條均線全部同方向' : '6 條均線大多同方向') + '（只提示，不加碼）' : '';
@@ -270,7 +269,7 @@ function fiveNotify_(evs, pos, b) {
   });
   if (!titles.length) { titles.push('📣 五線｜' + hint[0].k.replace('提示', '') + ' ' + fmt_(hint[0].p)); }
   if (hintTxt) bodies.push(hintTxt);
-  notify_(titles.join('\n'), tm + ' 15 分K 收盤\n' + bodies.join('\n') + tail, 'chart', 3);
+  notify_(titles.join('\n'), tm + ' 15 分K 收盤\n' + bodies.join('\n'), 'chart', 3);
 }
 function testFiveNotify() { fiveNotify_([{ k: '全線空進場', p: 43100, lots: 1, side: -1 }, { k: '全線空提示', p: 43100, side: -1 }], null, { t: Date.now() - 300000 }); }
 /** 在編輯器執行：看五線目前倉位（第一次會從網站資料補齊） */

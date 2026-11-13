@@ -995,7 +995,6 @@ function fiveCard(c) {
     ${T.length ? `<h3>每筆損益</h3><div class="flips">${first.map(trow).join("")}${rest.length ? `<details class="more-flips"><summary>顯示其他 ${rest.length} 筆</summary><div class="flips">${rest.map(trow).join("")}</div></details>` : ""}<div class="fr sum"><span>已結算 ${T.length} 筆</span><span>勝率 ${Math.round(win / T.length * 100)}%</span><b class="${tone(tot)}">${signed(Math.round(tot))} 點</b></div></div>` : ""}
     <h3>均線扣抵</h3><div class="flips">${rows}</div>
     <p class="note">規則：從 5MA 往長數，連續幾條「收盤在線上、線也向上」＝幾線多（三線＝5/10/20，四線＋60，全線＝6 條）。用 15 分K 算；新出現的三線、而且跟多空主開關（60 分K 吊燈）同方向才進場，進場一律先 1 口；之後收盤 ≥ 四線加碼到 2 口（最多 2 口）、五線／全線只提示；收盤破 5MA 減碼 1 口（只剩 1 口續抱），破 10MA 出清；反向新三線（也要跟主開關同方向）就反手。損益是點數合計（2 口就算 2 倍），沒扣手續費。扣抵＝下一根收完會丟掉的那根收盤，現價高於扣抵均線就上揚。</p>
-    <p class="note">回測 9/2～11/12（每口每次扣 5 點）：166 筆、勝率 31%、+10,467 點、最大回落 −2,826（舊版 5 分K 不過濾：936 筆、−3,068 點）。⚠️ 前半段只 +499，賺的大多來自 11 月這波趨勢，資料只有兩個多月，先看紀錄、不要真的照著下單。</p>
   </section>`;
 }
 
