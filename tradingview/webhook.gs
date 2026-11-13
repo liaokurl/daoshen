@@ -294,6 +294,12 @@ function tgSendTo_(chat, html) {
   });
 }
 function entryAlert_(props, dir, px, body) {
+  // 原本群組也另發一則短的「⚡ 可立刻下單」，跟一般翻向通知分開，一眼就看得到
+  try {
+    notify_('⚡ 可立刻下單｜' + (dir > 0 ? '做多 ' : '做空 ') + fmt_(px),
+      'SOP 全部符合：傑哥翻' + (dir > 0 ? '多' : '空') + '＋順主開關＋不追價\n🛡 智慧單：移動停利 ' + TRAIL + ' 點（初始停損 ' + fmt_(px - dir * TRAIL) + '）\n' + fiveAlign_(dir, props),
+      'zap', 5);
+  } catch (err) { console.warn('⚡ 通知失敗：' + err); }
   const chat = entryChat_();
   if (!chat) return;
   const head = (dir > 0 ? '🚨🔴 要下單：做多 ' : '🚨🟢 要下單：做空 ') + fmt_(px);
