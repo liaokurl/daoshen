@@ -1,7 +1,9 @@
 // 刀神×葵哥：即時行情中繼站＋TradingView 快訊接收器（貼到 Google 試算表的 Apps Script）
 // 1. App 按「更新」→ 這裡向 Yahoo 抓台指期近一／微型台指近一分K → 回傳給 App（瀏覽器不能直接讀 Yahoo）
 // 2. TradingView 快訊 → Webhook → 存進「快訊」工作表 → App 讀取最新 20 則
-const KEY = '請換成你自己的一串密碼';   // TradingView Webhook 網址要帶 ?key=這串，避免別人亂送
+// 密碼存在「指令碼屬性」（專案設定 → 指令碼屬性），程式裡不放密碼；換新版程式時整份覆蓋就好，不用再複製貼上
+const SECRETS_ = PropertiesService.getScriptProperties();
+const KEY = SECRETS_.getProperty('KEY') || '請換成你自己的一串密碼';   // TradingView Webhook 網址要帶 ?key=這串，避免別人亂送
 const SHEET = '快訊';
 const SYMBOLS = { 'WTX&': 1, 'WTM&': 1 };   // 只允許這兩個代號，避免被拿去當萬用代理
 
@@ -67,7 +69,7 @@ const NTFY_TOPIC = '請換成你的推播主題';
 const APP_URL = 'https://liaokurl.github.io/daoshen/';
 const NOTIFY_WARN = false;   // true＝第 1 根收在另一側時也先預警
 const NOTIFY_EMAIL = '';      // 也寄 Gmail 的話填你的信箱（留空＝不寄）
-const TG_TOKEN = '';          // Telegram 機器人權杖（@BotFather 給的）；留空＝不用 Telegram
+const TG_TOKEN = SECRETS_.getProperty('TG_TOKEN') || '';   // Telegram 機器人權杖（@BotFather 給的），存在指令碼屬性 TG_TOKEN；沒設＝不用 Telegram
 const TG_CHAT = '';           // 指定聊天室／群組編號（群組是負數）；留空＝自動抓最近傳話給機器人的聊天室
 
 function setupMonitor() {
