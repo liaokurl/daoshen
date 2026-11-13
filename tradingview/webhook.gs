@@ -25,12 +25,17 @@ function doPost(e) {
   return ContentService.createTextOutput('ok');
 }
 
-function chartData_(symbol) {
+function chartData_(symbol, doneOnly) {
   if (!SYMBOLS[symbol]) return { error: 'symbol not allowed' };
   const url = 'https://tw.stock.yahoo.com/_td-stock/api/resource/StockServices.chart;symbol=' + encodeURIComponent(symbol) + '?bkt=&device=desktop&ecma=modern&feature=ecmaModern';
   const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, headers: { 'accept': 'application/json', 'accept-language': 'zh-TW' } });
   if (res.getResponseCode() !== 200) return { error: 'HTTP ' + res.getResponseCode() };
   const j = JSON.parse(res.getContentText());
+  if (doneOnly && j.timestamp) {   // 監控用：拿掉還沒走完的最後 1 分K（時間標的是分鐘結束），收盤才不會提早 1 分鐘算
+    const now = Date.now() / 1000, q0 = j.indicators.quote[0];
+    let n = j.timestamp.length; while (n > 0 && j.timestamp[n - 1] > now) n--;
+    j.timestamp = j.timestamp.slice(0, n); ['open', 'high', 'low', 'close', 'volume'].forEach(k => { if (q0[k]) q0[k] = q0[k].slice(0, n); });
+  }
   // 只回傳 App 需要的欄位，縮小傳輸量
   return { timestamp: j.timestamp, indicators: { quote: [{ open: j.indicators.quote[0].open, high: j.indicators.quote[0].high, low: j.indicators.quote[0].low, close: j.indicators.quote[0].close, volume: j.indicators.quote[0].volume }] }, meta: { regularMarketPrice: j.meta && j.meta.regularMarketPrice, regularMarketTime: j.meta && j.meta.regularMarketTime }, quote: { price: j.quote && j.quote.price, refreshedTs: j.quote && j.quote.refreshedTs } };
 }
@@ -104,7 +109,7 @@ function monitor() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return;
   try {
-    const d = chartData_('WTM&');
+    const d = chartData_('WTM&', true);
     if (d.error) return;
     const props = PropertiesService.getScriptProperties();
     try { remindTick_(props); } catch (err) { console.warn('重複提醒失敗：' + err); }
@@ -259,12 +264,12 @@ function fivePush_(props, b) {
 function fiveNotify_(evs, pos, b) {
   if (!Array.isArray(evs)) evs = [evs];
   const tm = Utilities.formatDate(new Date(b.t + 300000), 'Asia/Taipei', 'HH:mm');
-  const plan = (s, lots) => (lots >= 2 ? '' : '加碼：收盤出現四線' + (s > 0 ? '多' : '空') + '以上加到 2 口\n') + '減碼：收盤' + (s > 0 ? '跌破' : '站上') + ' 5MA 出 1 口\n出清：收盤' + (s > 0 ? '跌破' : '站上') + ' 10MA 全出';
+  const plan = (s, lots, now4) => (lots >= 2 ? '' : '加碼：' + (now4 ? '下一根 15 分K 收盤還是' : '15 分K 收盤出現') + '四線' + (s > 0 ? '多' : '空') + '以上，就加到 2 口\n') + '減碼：收盤' + (s > 0 ? '跌破' : '站上') + ' 5MA 出 1 口\n出清：收盤' + (s > 0 ? '跌破' : '站上') + ' 10MA 全出';
   const hint = evs.filter(e => /提示/.test(e.k)), main = evs.filter(e => !/提示/.test(e.k));
   const hintTxt = hint.length ? (hint[0].k.indexOf('全線') >= 0 ? '6 條均線全部同方向' : '6 條均線大多同方向') + '（只提示，不加碼）' : '';
   const titles = [], bodies = [];
   main.forEach(e => {
-    if (/進場/.test(e.k)) { titles.push((e.side > 0 ? '🔴 五線｜' : '🟢 五線｜') + e.k + ' ' + e.lots + ' 口 ' + fmt_(e.p)); bodies.push(plan(e.side, e.lots)); }
+    if (/進場/.test(e.k)) { titles.push((e.side > 0 ? '🔴 五線｜' : '🟢 五線｜') + e.k + ' ' + e.lots + ' 口 ' + fmt_(e.p)); bodies.push(plan(e.side, e.lots, !/^三線/.test(e.k))); }
     else if (/加碼/.test(e.k)) { titles.push('➕ 五線｜' + e.k + '到 2 口 ' + fmt_(e.p)); bodies.push(plan(e.side, 2)); }
     else if (e.k === '減碼') { titles.push('➖ 五線｜減碼 1 口 ' + fmt_(e.p)); bodies.push('收盤破 5MA，這口 ' + (e.part >= 0 ? '+' : '') + Math.round(e.part) + ' 點，剩 1 口'); }
     else { titles.push((e.pnl >= 0 ? '✅ 五線｜' : '❌ 五線｜') + e.k + ' ' + fmt_(e.p)); bodies.push('本筆合計 ' + (e.pnl >= 0 ? '+' : '') + Math.round(e.pnl) + ' 點（' + e.lots + ' 口持有到最後，含已減碼）'); }
@@ -895,4 +900,67 @@ function springNotify_(bars, tf, props) {
     ce > 0 ? '✅ 主開關＝多（順勢）' : ce < 0 ? '⚠️ 主開關＝空（逆勢，回測勝率更低，建議不做）' : '主開關未定',
     '回測 9/2～10/27：破底翻勝率跟隨機進場差不多，當提醒用，進場還是看傑哥＋主開關',
   ].join('\n'), 'red_circle', 4);
+}
+
+
+// ================= 自動更新：GitHub 有新版就自己換程式、自己部署新版本 =================
+// 一次性設定：①開啟 Apps Script API（https://script.google.com/home/usersettings）②appsscript.json 換成 repo 裡的版本 ③執行 setupAutoUpdate
+const CODE_URL = 'https://raw.githubusercontent.com/liaokurl/daoshen/main/tradingview/webhook.gs';
+function scriptApi_(method, path, body) {
+  const res = UrlFetchApp.fetch('https://script.googleapis.com/v1/projects/' + ScriptApp.getScriptId() + path, {
+    method: method, contentType: 'application/json', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+    payload: body ? JSON.stringify(body) : undefined,
+  });
+  const code = res.getResponseCode(), txt = res.getContentText();
+  if (code >= 300) throw new Error('Apps Script API ' + code + '：' + txt.slice(0, 300));
+  return txt ? JSON.parse(txt) : {};
+}
+function codeHash_(src) { return Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, src)); }
+function autoUpdate() {
+  const props = PropertiesService.getScriptProperties();
+  const res = UrlFetchApp.fetch(CODE_URL + '?t=' + Date.now(), { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) return;
+  const src = res.getContentText();
+  if (src.length < 20000 || src.indexOf('function autoUpdate()') < 0 || src.indexOf('function monitor()') < 0) return;   // 抓到不完整的檔案就不換
+  const h = codeHash_(src);
+  if (props.getProperty('codeHash') === h) return;
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return;
+  try {
+    const cur = scriptApi_('get', '/content');
+    let done = false;
+    const files = cur.files.map(f => {
+      if (f.type === 'SERVER_JS' && !done && f.source.indexOf('function monitor()') >= 0) { done = true; return { name: f.name, type: f.type, source: src }; }
+      return { name: f.name, type: f.type, source: f.source };
+    });
+    if (!done) throw new Error('找不到主程式檔');
+    scriptApi_('put', '/content', { files: files });   // 語法有錯 Google 會拒收，舊程式照常跑
+    const v = scriptApi_('post', '/versions', { description: '自動更新 ' + Utilities.formatDate(new Date(), 'Asia/Taipei', 'MM/dd HH:mm') });
+    const deps = scriptApi_('get', '/deployments').deployments || [];
+    let n = 0;
+    deps.forEach(dp => {
+      const cfg = dp.deploymentConfig || {};
+      if (!cfg.versionNumber) return;   // HEAD（測試部署）不用動
+      scriptApi_('put', '/deployments/' + dp.deploymentId, { deploymentConfig: { scriptId: ScriptApp.getScriptId(), versionNumber: v.versionNumber, manifestFileName: 'appsscript', description: cfg.description || '' } });
+      n++;
+    });
+    props.setProperty('codeHash', h);
+    notify_('🔄 程式已自動更新', '換成 GitHub 最新版（版本 ' + v.versionNumber + '），已更新 ' + n + ' 個部署作業，網址不變', 'arrows_counterclockwise', 2);
+  } catch (err) {
+    const last = Number(props.getProperty('autoUpdErr') || 0);
+    if (Date.now() - last > 6 * H) { props.setProperty('autoUpdErr', String(Date.now())); notify_('⚠️ 自動更新失敗', String(err).slice(0, 400), 'warning', 3); }
+    console.warn('自動更新失敗：' + err);
+  } finally {
+    lock.releaseLock();
+  }
+}
+/** 執行一次：建立每 10 分鐘檢查一次的觸發條件，並確認權限都正常 */
+function setupAutoUpdate() {
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'autoUpdate').forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('autoUpdate').timeBased().everyMinutes(10).create();
+  const n = (scriptApi_('get', '/deployments').deployments || []).length;   // 沒開 API 或權限不夠會在這裡報錯
+  const src = UrlFetchApp.fetch(CODE_URL + '?t=' + Date.now()).getContentText();
+  PropertiesService.getScriptProperties().setProperty('codeHash', codeHash_(src));
+  notify_('✅ 自動更新已開啟', '每 10 分鐘檢查 GitHub，有新版就自己換程式、部署新版本（目前有 ' + n + ' 個部署作業）', 'white_check_mark', 2);
 }
