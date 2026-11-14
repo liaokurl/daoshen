@@ -17,7 +17,7 @@ const VERSION = "車干製V1.5";
 const $app = document.getElementById("app");
 const MANUAL_KEY = "daoshen-manual-price";
 const state = { base: null, cfg: null, liveInfo: null, loading: false, bundle: null, manual: null, error: null, tab: readTab(), signals: null, editLayout: null };
-const TABS = [["dao", "刀神"], ["kui", "葵哥"], ["plan", "計畫"], ["more", "資料"]];
+const TABS = [["dao", "刀神"], ["sim", "模擬單"], ["kui", "葵哥"], ["plan", "計畫"], ["more", "資料"]];
 function readTab() { try { return localStorage.getItem("daoshen-tab") || "dao"; } catch { return "dao"; } }
 
 const fmt = v => (v == null || !Number.isFinite(v) ? "—" : Math.round(v).toLocaleString("en-US"));
@@ -133,7 +133,8 @@ function render() {
   }
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
   const defs = {
-    dao: [["paper", "🧪 模擬下單", paperCard], ["zs", "傑哥戰神帶狀", zsCard], ["five", "五線（均線加減碼）", fiveCard], ["plutus", "Plutus 雙訊號", plutusCard], ["ce", "多空主開關", ceCard], ["draw", "畫線看盤", drawCard], ["six", "六層第 5 層", sixMini], ["swing", "前低第二支腳", swingCard], ["sword", "三刀流", swordCard], ["sig", "TradingView 快訊", signalsCard], ["struct", "均線結構", structureCard], ["chart", "走勢圖", chartCard]],
+    dao: [["zs", "傑哥戰神帶狀", zsCard], ["five", "五線（均線加減碼）", fiveCard], ["plutus", "Plutus 雙訊號", plutusCard], ["ce", "多空主開關", ceCard], ["draw", "畫線看盤", drawCard], ["six", "六層第 5 層", sixMini], ["swing", "前低第二支腳", swingCard], ["sword", "三刀流", swordCard], ["sig", "TradingView 快訊", signalsCard], ["struct", "均線結構", structureCard], ["chart", "走勢圖", chartCard]],
+    sim: [["paper", "🧪 模擬單", paperCard]],
     kui: [["six", "六層多空點位", sixCard], ["kuige", "葵哥三等分", kuigeCard]],
     plan: [["plan", "盤前計畫", planCard], ["review", "檢討", reviewCard]],
     more: [["ext", "外部資料", extCard], ["stats", "回測統計", statsCard], ["status", "資料狀態", statusCard]],
@@ -1010,24 +1011,29 @@ function fiveCard(c) {
 // ---------- 🧪 模擬下單：SOP（⚡）與 Plutus（🔷 雙訊號）各 1 口微台，移動停利 180 ----------
 function paperCard(c) {
   const P = state.paper;
-  if (!P) return "";
-  if (P.error) return `<section class="card"><h2>🧪 模擬下單</h2><p class="note">讀不到模擬交易（${esc(P.error)}）</p></section>`;
-  const px = c.price ?? P.px, w = s => (s > 0 ? "多" : "空");
-  const books = Object.entries(P.books || {});
-  const pos = books.length ? books.map(([b, p]) => {
-    const pl = px != null ? (px - p.px) * p.side : null, stop = p.best - p.side * P.trail;
-    return `<div class="pos ${p.side > 0 ? "long" : "short"}"><span class="k">${esc(b)}｜${p.side > 0 ? "持有多單" : "持有空單"} 1 口</span><span class="v">進場 ${fmt(p.px)}</span><span class="pl">${pl != null ? `${signed(Math.round(pl))} 點` : ""}｜移動停損 ${fmt(stop)}｜${fmtDateTime(p.t)}</span></div>`;
-  }).join("") : `<div class="pos flat"><span class="k">空手</span><span class="pl">等 ⚡ SOP 或 🔷 Plutus 雙訊號</span></div>`;
-  const T = (P.trades || []).filter(t => t.pnl != null && !/測試/.test(String(t.note) + t.book));
-  const sum = b => { const x = T.filter(t => t.book === b); return x.length ? `${b}：${x.length} 筆、勝率 ${Math.round(x.filter(t => t.pnl > 0).length / x.length * 100)}%、<b class="${x.reduce((a, t) => a + t.pnl, 0) >= 0 ? "t-up" : "t-down"}">${signed(Math.round(x.reduce((a, t) => a + t.pnl, 0)))} 點</b>` : `${b}：還沒有成交`; };
-  const rows = (P.trades || []).slice().reverse().slice(0, 10).map(t => `<div class="fr"><span>${fmtDateTime(Date.parse(t.at))}</span><span class="${t.side === "多" ? "t-up" : "t-down"}">${esc(t.book)} ${esc(t.act)} ${esc(t.side)}</span><b>${fmt(t.px)}${t.pnl != null ? ` <small class="${t.pnl >= 0 ? "t-up" : "t-down"}">${signed(Math.round(t.pnl))}</small>` : ""}</b></div>`).join("");
-  return `<section class="card sword ${books.length ? (books[0][1].side > 0 ? "up" : "down") : "neutral"}">
-    <h2>🧪 模擬下單（紙上交易）</h2>
-    ${pos}
-    <p class="say">${sum("SOP")}<br>${sum("Plutus")}</p>
-    ${rows ? `<h3>最近成交</h3><div class="flips">${rows}</div>` : ""}
-    <p class="note">訊號一出現就用當下價格模擬成交 1 口微台，移動停利 ${P.trail} 點、同策略反向訊號就反手，每筆扣 ${P.cost} 點成本。沒有真的下單；之後接券商 API 時，下單程式照同一份下單佇列送單。</p>
-  </section>`;
+  if (!P) return `<section class="card"><h2>🧪 模擬單</h2><p class="note">讀取中…</p></section>`;
+  if (P.error) return `<section class="card"><h2>🧪 模擬單</h2><p class="note">讀不到模擬交易（${esc(P.error)}）</p></section>`;
+  const px = c.price ?? P.px, cfg = P.cfg ?? {};
+  const all = (P.trades || []).filter(t => !/測試/.test(String(t.note) + t.book));
+  const one = (book, k) => {
+    const p = (P.books || {})[book], T = all.filter(t => t.book === book && t.pnl != null);
+    const tot = T.reduce((a, t) => a + t.pnl, 0), win = T.filter(t => t.pnl > 0).length;
+    const pos = p ? (() => {
+      const pl = px != null ? (px - p.px) * p.side : null, stop = p.best - p.side * (p.trail ?? k.trail);
+      return `<div class="pos ${p.side > 0 ? "long" : "short"}"><span class="k">${p.side > 0 ? "持有多單" : "持有空單"} 1 口</span><span class="v">進場 ${fmt(p.px)}</span><span class="pl">${pl != null ? `<b class="${pl >= 0 ? "t-up" : "t-down"}">${signed(Math.round(pl))} 點</b>｜` : ""}停損 ${fmt(stop)}｜${fmtDateTime(p.t)}</span></div>`;
+    })() : `<div class="pos flat"><span class="k">空手</span><span class="pl">等${k.src === "SOP" ? " ⚡ SOP 全部符合" : " 🔷 Plutus 雙訊號"}</span></div>`;
+    const rows = all.filter(t => t.book === book).slice().reverse().slice(0, 6).map(t => `<div class="fr"><span>${fmtDateTime(Date.parse(t.at))}</span><span class="${t.side === "多" ? "t-up" : "t-down"}">${esc(t.act)} ${esc(t.side)}</span><b>${fmt(t.px)}${t.pnl != null ? ` <small class="${t.pnl >= 0 ? "t-up" : "t-down"}">${signed(Math.round(t.pnl))}</small>` : ""}</b></div>`).join("");
+    return `<section class="card sword ${p ? (p.side > 0 ? "up" : "down") : "neutral"}">
+      <h2>${esc(book)}｜${esc(k.note ?? "")}</h2>
+      ${pos}
+      <div class="verdict"><span class="side">${T.length ? `${signed(Math.round(tot))} 點` : "還沒有成交"}</span><span class="mode">${T.length ? `${T.length} 筆｜勝率 ${Math.round(win / T.length * 100)}%｜每筆 ${signed(Math.round(tot / T.length))}` : ""}</span></div>
+      ${rows ? `<div class="flips">${rows}</div>` : ""}
+    </section>`;
+  };
+  const names = Object.keys(cfg);
+  const cmp = names.map(b => { const T = all.filter(t => t.book === b && t.pnl != null), tot = T.reduce((a, t) => a + t.pnl, 0); return `<div class="fr"><span>${esc(b)}</span><span>${T.length} 筆｜勝率 ${T.length ? Math.round(T.filter(t => t.pnl > 0).length / T.length * 100) : 0}%</span><b class="${tot >= 0 ? "t-up" : "t-down"}">${signed(Math.round(tot))} 點</b></div>`; }).join("");
+  return `<section class="card"><h2>🧪 模擬單總覽</h2><div class="flips">${cmp}</div>
+    <p class="note">訊號一出現就用當下價格模擬成交 1 口微台，每筆扣 ${P.cost} 點。SOP 兩本帳進出場訊號一樣，只差移動停利 120／180，也會在傑哥反向翻時出場（跟回測同規則）；Plutus 用雙訊號進場、反向雙訊號反手、移動停利 180。打到停損就自動出場並推播。沒有真的下單。</p></section>` + names.map(b => one(b, cfg[b])).join("");
 }
 
 function plutusCard(c) {

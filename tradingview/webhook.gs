@@ -154,6 +154,7 @@ function monitor() {
       if (st.pend && st.cnt >= 2) {
         const was = st.dir;
         st.dir = st.pend; st.pend = 0; st.cnt = 0;
+        if (!quiet) { try { paperFlip_(st.dir, b.c); } catch (err) { console.warn('模擬出場失敗：' + err); } }
         props.setProperty('zsFlip', JSON.stringify({ t: b.t + 300000, side: st.dir, px: b.c, ce: (JSON.parse(props.getProperty('ce') || '{}').dir || 0) }));
         const er = effRatio_(bars.slice(0, i + 1).map(x => x.c));
         if (!quiet) {
@@ -992,9 +993,16 @@ function testPlutus() {
 
 
 // ================= 模擬交易（紙上下單）：訊號 → 下單佇列 → 模擬成交 → Telegram＋App =================
-// 每個策略一本帳、各 1 口微台：SOP＝⚡ 可立刻下單；Plutus＝🔷 雙訊號。出場：移動停利 PAPER_TRAIL 點，或同策略反向訊號反手。
-// 之後接真單：電腦上的下單程式讀 orders（doGet action=paper 的 orders），照單送到券商；模擬這邊照常記錄當對照。
-const PAPER_TRAIL = 180, PAPER_COST = 5, PAPER_SHEET = '模擬交易';
+// 每本帳 1 口微台、每筆扣 PAPER_COST 點：
+//   SOP-120／SOP-180：⚡ SOP 全部符合就進場；移動停利 120／180，或傑哥帶狀反向翻就出場（跟回測同規則）
+//   Plutus-180：🔷 雙訊號進場；移動停利 180，或反向雙訊號反手
+// 之後接真單：電腦上的下單程式讀 orders（doGet action=paper），照單送到券商；模擬照常記錄當對照。
+const PAPER_COST = 5, PAPER_SHEET = '模擬交易', PAPER_TRAIL = 180;
+const PAPER_BOOKS = {
+  'SOP-120': { src: 'SOP', trail: 120, note: '傑哥 SOP｜移動停利 120' },
+  'SOP-180': { src: 'SOP', trail: 180, note: '傑哥 SOP｜移動停利 180' },
+  'Plutus-180': { src: 'Plutus', trail: 180, note: 'Plutus 雙訊號｜移動停利 180' },
+};
 function paperState_() { return JSON.parse(PropertiesService.getScriptProperties().getProperty('paper') || '{"books":{},"orders":[],"seq":0}'); }
 function paperSave_(st) { st.orders = (st.orders || []).slice(-50); PropertiesService.getScriptProperties().setProperty('paper', JSON.stringify(st)); }
 function paperSheet_() {
@@ -1007,30 +1015,45 @@ function paperLastPx_() {
   const zs = JSON.parse(PropertiesService.getScriptProperties().getProperty('zs') || '{}');
   return zs.bars && zs.bars.length ? zs.bars[zs.bars.length - 1].c : null;
 }
+/** 平倉一本帳，回傳一行說明（呼叫端決定要不要合併成一則通知） */
 function paperClose_(st, book, px, why, at) {
   const pos = st.books[book]; if (!pos) return null;
   const pnl = (px - pos.px) * pos.side - PAPER_COST;
   st.seq++; st.orders.push({ id: st.seq, at: at, book: book, act: 'close', side: -pos.side, qty: 1, px: px, why: why });
   paperSheet_().appendRow([new Date(at), book, '出場（' + why + '）', pos.side > 0 ? '多' : '空', px, pnl, '進場 ' + pos.px + (pos.test ? '｜測試' : '')]);
-  notify_((pnl >= 0 ? '🧪✅ 模擬出場｜' : '🧪❌ 模擬出場｜') + book + ' ' + (pos.side > 0 ? '多單' : '空單') + ' ' + fmt_(px),
-    why + '｜進場 ' + fmt_(pos.px) + ' → 出場 ' + fmt_(px) + '\n本筆 ' + (pnl >= 0 ? '+' : '') + Math.round(pnl) + ' 點（已扣 ' + PAPER_COST + ' 點成本）' + (pos.test ? '\n（測試單）' : ''), 'test_tube', 3);
   delete st.books[book];
-  return pnl;
+  return { pnl: pnl, line: (pnl >= 0 ? '✅ ' : '❌ ') + book + ' ' + (pos.side > 0 ? '多單' : '空單') + '：' + fmt_(pos.px) + ' → ' + fmt_(px) + '，' + (pnl >= 0 ? '+' : '') + Math.round(pnl) + ' 點（' + why + '）' };
 }
-/** 策略訊號 → 模擬下單（同方向已有單就不動；反向先平倉再反手） */
-function paperOrder_(book, side, px, why, test) {
+function paperNotifyClose_(rs, title) {
+  rs = rs.filter(Boolean); if (!rs.length) return;
+  const tot = rs.reduce((a, r) => a + r.pnl, 0);
+  notify_((tot >= 0 ? '🧪✅ ' : '🧪❌ ') + title, rs.map(r => r.line).join('\n') + '\n（已扣 ' + PAPER_COST + ' 點成本，模擬交易）', 'test_tube', 3);
+}
+/** 策略訊號 → 這個訊號來源的每本帳都下單（同方向已有單就不動；反向先平倉再反手），合併成一則通知 */
+function paperOrder_(src, side, px, why, test) {
   px = px || paperLastPx_(); if (!px || !side) return;
   const st = paperState_(), now = Date.now();
   st.books = st.books || {}; st.orders = st.orders || [];
-  const pos = st.books[book];
-  if (pos && pos.side === side) return;
-  if (pos) paperClose_(st, book, px, '反向訊號反手', now);
-  st.seq++; st.orders.push({ id: st.seq, at: now, book: book, act: 'open', side: side, qty: 1, px: px, why: why, trail: PAPER_TRAIL });
-  st.books[book] = { side: side, px: px, t: now, best: px, lastT: now, test: !!test };
-  paperSheet_().appendRow([new Date(now), book, '進場', side > 0 ? '多' : '空', px, '', why + (test ? '｜測試' : '')]);
-  notify_('🧪 模擬下單｜' + book + ' ' + (side > 0 ? '做多' : '做空') + ' 1 口 ' + fmt_(px),
-    why + '\n🛡 移動停利 ' + PAPER_TRAIL + ' 點（目前停損 ' + fmt_(px - side * PAPER_TRAIL) + '）\n（模擬交易，沒有真的下單）', 'test_tube', 3);
+  const cfg = test ? { '測試': { src: src, trail: PAPER_TRAIL } } : PAPER_BOOKS;
+  const opened = [], closed = [];
+  Object.keys(cfg).filter(b => cfg[b].src === src).forEach(book => {
+    const pos = st.books[book], tr = cfg[book].trail;
+    if (pos && pos.side === side) return;
+    if (pos) closed.push(paperClose_(st, book, px, '反向訊號反手', now));
+    st.seq++; st.orders.push({ id: st.seq, at: now, book: book, act: 'open', side: side, qty: 1, px: px, why: why, trail: tr });
+    st.books[book] = { side: side, px: px, t: now, best: px, lastT: now, trail: tr, test: !!test };
+    paperSheet_().appendRow([new Date(now), book, '進場', side > 0 ? '多' : '空', px, '', why + (test ? '｜測試' : '')]);
+    opened.push(book + '：停損 ' + fmt_(px - side * tr) + '（移動 ' + tr + ' 點）');
+  });
+  if (closed.length) paperNotifyClose_(closed, '模擬反手平倉｜' + src);
+  if (opened.length) notify_('🧪 模擬下單｜' + src + ' ' + (side > 0 ? '做多' : '做空') + ' ' + fmt_(px), why + '\n' + opened.join('\n') + '\n（模擬交易，沒有真的下單）', 'test_tube', 3);
   paperSave_(st);
+}
+/** 傑哥帶狀翻向：SOP 帳上反方向的單出場（回測就是這樣出場） */
+function paperFlip_(dir, px) {
+  const st = paperState_(); if (!st.books) return;
+  const rs = Object.keys(st.books).filter(b => (PAPER_BOOKS[b] || {}).src === 'SOP' && st.books[b].side !== dir).map(b => paperClose_(st, b, px, '傑哥反向翻', Date.now()));
+  if (rs.length) { paperNotifyClose_(rs, '模擬出場｜傑哥翻' + (dir > 0 ? '多' : '空')); paperSave_(st); }
 }
 /** 每分鐘：用 Yahoo 走完的 1 分K 更新最有利價，碰到移動停利就出場 */
 function paperTick_(d) {
@@ -1038,12 +1061,12 @@ function paperTick_(d) {
   const ts = d.timestamp || [], q = d.indicators.quote[0];
   let changed = false;
   Object.keys(st.books).forEach(book => {
-    const pos = st.books[book];
+    const pos = st.books[book], tr = pos.trail || PAPER_TRAIL;
     for (let i = 0; i < ts.length && st.books[book]; i++) {
       const h = q.high[i], l = q.low[i]; if (h == null || l == null) continue;
       const t = fixYahoo_(ts[i] * 1000 - 60000); if (t < pos.lastT) continue;
-      const stop = pos.best - pos.side * PAPER_TRAIL;
-      if ((pos.side > 0 && l <= stop) || (pos.side < 0 && h >= stop)) { paperClose_(st, book, stop, '移動停利 ' + PAPER_TRAIL, t + 60000); changed = true; break; }
+      const stop = pos.best - pos.side * tr;
+      if ((pos.side > 0 && l <= stop) || (pos.side < 0 && h >= stop)) { paperNotifyClose_([paperClose_(st, book, stop, '打到移動停利 ' + tr, t + 60000)], '模擬出場｜' + book); changed = true; break; }
       pos.best = pos.side > 0 ? Math.max(pos.best, h) : Math.min(pos.best, l);
       pos.lastT = t + 60000; changed = true;
     }
@@ -1052,15 +1075,15 @@ function paperTick_(d) {
 }
 /** App 讀取：目前倉位、最近成交、下單佇列 */
 function paperView_() {
-  const st = paperState_(), sh = paperSheet_(), n = sh.getLastRow(), k = Math.min(100, Math.max(0, n - 1));
+  const st = paperState_(), sh = paperSheet_(), n = sh.getLastRow(), k = Math.min(300, Math.max(0, n - 1));
   const rows = k ? sh.getRange(n - k + 1, 1, k, 7).getValues() : [];
-  return { books: st.books || {}, orders: (st.orders || []).slice(-20), trail: PAPER_TRAIL, cost: PAPER_COST, px: paperLastPx_(),
+  return { books: st.books || {}, cfg: PAPER_BOOKS, orders: (st.orders || []).slice(-20), trail: PAPER_TRAIL, cost: PAPER_COST, px: paperLastPx_(),
     trades: rows.map(r => ({ at: r[0] instanceof Date ? r[0].toISOString() : String(r[0]), book: r[1], act: r[2], side: r[3], px: r[4], pnl: r[5] === '' ? null : Number(r[5]), note: r[6] })) };
 }
 /** 測試：開一張測試多單、馬上平倉，確認 Telegram 和 App 都收得到（網址加 ?action=papertest&key=密碼） */
 function paperTest_() {
   const px = paperLastPx_() || 43700;
   paperOrder_('測試', 1, px, '🧪 串接測試', true);
-  const st = paperState_(); paperClose_(st, '測試', px + 20, '測試平倉', Date.now()); paperSave_(st);
+  const st = paperState_(); paperNotifyClose_([paperClose_(st, '測試', px + 20, '測試平倉', Date.now())], '模擬出場｜測試'); paperSave_(st);
   return { ok: true, px: px };
 }
