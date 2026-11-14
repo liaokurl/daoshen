@@ -7,7 +7,7 @@ import { fmtYmd, fmtDateTime, fmtTime, weekdayOf } from "./engine/time.js";
 import { smaSeries } from "./engine/indicators.js";
 import { threeSwords, turtle, pcrView, swordSummary, SWORD_MODES } from "./engine/sword.js";
 import { kuigeModel } from "./engine/kuige.js";
-import { loadSignals, plutusKind, plutusReplay } from "./signals.js";
+import { loadSignals, plutusKind, plutusReplay, loadPaper } from "./signals.js";
 import { fetchLive, applyLive } from "./live.js";
 import { proSniper, washout, zhanshenBand, chandelierExit, tradesFrom, CHASE_ER, fiveLines } from "./engine/myind.js";
 import { sixLevels, periodRange, SIX_RATIOS, SIX_PERIODS } from "./engine/sixlayer.js";
@@ -52,6 +52,7 @@ async function load() {
   state.loading = false;
   render();
   loadSignals().then(s => { state.signals = s; render(); });
+  loadPaper().then(p => { state.paper = p; render(); });
 }
 
 /** 只抓即時行情（不重抓 bundle） */
@@ -132,7 +133,7 @@ function render() {
   }
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
   const defs = {
-    dao: [["zs", "傑哥戰神帶狀", zsCard], ["five", "五線（均線加減碼）", fiveCard], ["plutus", "Plutus 雙訊號", plutusCard], ["ce", "多空主開關", ceCard], ["draw", "畫線看盤", drawCard], ["six", "六層第 5 層", sixMini], ["swing", "前低第二支腳", swingCard], ["sword", "三刀流", swordCard], ["sig", "TradingView 快訊", signalsCard], ["struct", "均線結構", structureCard], ["chart", "走勢圖", chartCard]],
+    dao: [["paper", "🧪 模擬下單", paperCard], ["zs", "傑哥戰神帶狀", zsCard], ["five", "五線（均線加減碼）", fiveCard], ["plutus", "Plutus 雙訊號", plutusCard], ["ce", "多空主開關", ceCard], ["draw", "畫線看盤", drawCard], ["six", "六層第 5 層", sixMini], ["swing", "前低第二支腳", swingCard], ["sword", "三刀流", swordCard], ["sig", "TradingView 快訊", signalsCard], ["struct", "均線結構", structureCard], ["chart", "走勢圖", chartCard]],
     kui: [["six", "六層多空點位", sixCard], ["kuige", "葵哥三等分", kuigeCard]],
     plan: [["plan", "盤前計畫", planCard], ["review", "檢討", reviewCard]],
     more: [["ext", "外部資料", extCard], ["stats", "回測統計", statsCard], ["status", "資料狀態", statusCard]],
@@ -1006,6 +1007,29 @@ function fiveCard(c) {
 
 // ---------- TradingView 快訊 ----------
 // ---------- Plutus Core：三角＝預警、三角＋頂底＝雙訊號、副圖轉強／轉弱同向＝確認 ----------
+// ---------- 🧪 模擬下單：SOP（⚡）與 Plutus（🔷 雙訊號）各 1 口微台，移動停利 180 ----------
+function paperCard(c) {
+  const P = state.paper;
+  if (!P) return "";
+  if (P.error) return `<section class="card"><h2>🧪 模擬下單</h2><p class="note">讀不到模擬交易（${esc(P.error)}）</p></section>`;
+  const px = c.price ?? P.px, w = s => (s > 0 ? "多" : "空");
+  const books = Object.entries(P.books || {});
+  const pos = books.length ? books.map(([b, p]) => {
+    const pl = px != null ? (px - p.px) * p.side : null, stop = p.best - p.side * P.trail;
+    return `<div class="pos ${p.side > 0 ? "long" : "short"}"><span class="k">${esc(b)}｜${p.side > 0 ? "持有多單" : "持有空單"} 1 口</span><span class="v">進場 ${fmt(p.px)}</span><span class="pl">${pl != null ? `${signed(Math.round(pl))} 點` : ""}｜移動停損 ${fmt(stop)}｜${fmtDateTime(p.t)}</span></div>`;
+  }).join("") : `<div class="pos flat"><span class="k">空手</span><span class="pl">等 ⚡ SOP 或 🔷 Plutus 雙訊號</span></div>`;
+  const T = (P.trades || []).filter(t => t.pnl != null && !/測試/.test(String(t.note) + t.book));
+  const sum = b => { const x = T.filter(t => t.book === b); return x.length ? `${b}：${x.length} 筆、勝率 ${Math.round(x.filter(t => t.pnl > 0).length / x.length * 100)}%、<b class="${x.reduce((a, t) => a + t.pnl, 0) >= 0 ? "t-up" : "t-down"}">${signed(Math.round(x.reduce((a, t) => a + t.pnl, 0)))} 點</b>` : `${b}：還沒有成交`; };
+  const rows = (P.trades || []).slice().reverse().slice(0, 10).map(t => `<div class="fr"><span>${fmtDateTime(Date.parse(t.at))}</span><span class="${t.side === "多" ? "t-up" : "t-down"}">${esc(t.book)} ${esc(t.act)} ${esc(t.side)}</span><b>${fmt(t.px)}${t.pnl != null ? ` <small class="${t.pnl >= 0 ? "t-up" : "t-down"}">${signed(Math.round(t.pnl))}</small>` : ""}</b></div>`).join("");
+  return `<section class="card sword ${books.length ? (books[0][1].side > 0 ? "up" : "down") : "neutral"}">
+    <h2>🧪 模擬下單（紙上交易）</h2>
+    ${pos}
+    <p class="say">${sum("SOP")}<br>${sum("Plutus")}</p>
+    ${rows ? `<h3>最近成交</h3><div class="flips">${rows}</div>` : ""}
+    <p class="note">訊號一出現就用當下價格模擬成交 1 口微台，移動停利 ${P.trail} 點、同策略反向訊號就反手，每筆扣 ${P.cost} 點成本。沒有真的下單；之後接券商 API 時，下單程式照同一份下單佇列送單。</p>
+  </section>`;
+}
+
 function plutusCard(c) {
   const sig = state.signals;
   if (!sig || !sig.configured || sig.error) return "";
@@ -1072,7 +1096,7 @@ function bind() {
 document.getElementById("refresh").addEventListener("click", load);
 // 盤中每 60 秒自動抓一次即時行情；伺服器資料每 5 分鐘重抓
 setInterval(() => { if (!document.hidden && state.base) refreshLive(); }, 60_000);
-setInterval(() => { if (!document.hidden && state.base) loadSignals().then(s => { state.signals = s; render(); }); }, 60_000);   // 快訊（含 Plutus）每分鐘更新
+setInterval(() => { if (!document.hidden && state.base) { loadSignals().then(s => { state.signals = s; render(); }); loadPaper().then(p => { state.paper = p; render(); }); } }, 60_000);   // 快訊（含 Plutus）每分鐘更新
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
 setInterval(() => { if (!document.hidden) load(); }, 5 * 60_000);
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

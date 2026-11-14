@@ -10,6 +10,8 @@ const SYMBOLS = { 'WTX&': 1, 'WTM&': 1 };   // 只允許這兩個代號，避免
 function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.action === 'chart') return chart_(p.symbol || 'WTX&');
+  if (p.action === 'paper') return json_(paperView_());
+  if (p.action === 'papertest' && p.key === KEY) return json_(paperTest_());
   if (p.action === 'charts') return json_({ WTX: chartData_('WTX&'), WTM: chartData_('WTM&'), at: new Date().toISOString() });
   return signals_(p);
 }
@@ -115,6 +117,7 @@ function monitor() {
     if (d.error) return;
     const props = PropertiesService.getScriptProperties();
     try { remindTick_(props); } catch (err) { console.warn('重複提醒失敗：' + err); }
+    try { paperTick_(d); } catch (err) { console.warn('模擬交易更新失敗：' + err); }
     try { rollFix_(props); } catch (err) { console.warn('換月處理失敗：' + err); }
     const st = JSON.parse(props.getProperty('zs') || '{"bars":[],"dir":0,"pend":0,"cnt":0,"lastT":0}');
     // 1 分K → 5 分K（Yahoo 時間是分鐘結束）
@@ -296,6 +299,7 @@ function tgSendTo_(chat, html) {
   });
 }
 function entryAlert_(props, dir, px, body) {
+  try { paperOrder_('SOP', dir, px, '⚡ SOP 全部符合'); } catch (err) { console.warn('模擬下單失敗：' + err); }
   // 原本群組也另發一則短的「⚡ 可立刻下單」，跟一般翻向通知分開，一眼就看得到
   try {
     notify_('⚡ 可立刻下單｜' + (dir > 0 ? '做多 ' : '做空 ') + fmt_(px),
@@ -962,6 +966,7 @@ function plutusPost_(body) {
     const dupDbl = st.dbl && st.dbl.side === kd.side && now - st.dbl.t < PL_CONFIRM_MIN * M;
     if (paired && !dupDbl) {
       st.dbl = { side: kd.side, t: now, px: px, confirmed: st.sub && st.sub.side === kd.side };
+      try { paperOrder_('Plutus', kd.side, px, '🔷 Plutus 雙訊號'); } catch (err) { console.warn('模擬下單失敗：' + err); }
       notify_((kd.side > 0 ? '🔷▲ Plutus 雙訊號｜做多' : '🔷▼ Plutus 雙訊號｜做空') + pxTxt,
         (kd.side > 0 ? '向上三角＋底' : '向下三角＋頂') + '\n' + subLine(kd.side) + '\n' + plutusCtx_(kd.side, props), kd.side > 0 ? 'red_circle' : 'green_circle', 5);
     } else if (kd.k === 'tri') {
@@ -983,4 +988,79 @@ function plutusPost_(body) {
 function testPlutus() {
   PropertiesService.getScriptProperties().deleteProperty('plutus');
   ['Plutus 訊號｜狀態轉強', 'Plutus 訊號｜向上三角 43705', 'Plutus 訊號｜底 43705'].forEach(t => plutusPost_(t));
+}
+
+
+// ================= 模擬交易（紙上下單）：訊號 → 下單佇列 → 模擬成交 → Telegram＋App =================
+// 每個策略一本帳、各 1 口微台：SOP＝⚡ 可立刻下單；Plutus＝🔷 雙訊號。出場：移動停利 PAPER_TRAIL 點，或同策略反向訊號反手。
+// 之後接真單：電腦上的下單程式讀 orders（doGet action=paper 的 orders），照單送到券商；模擬這邊照常記錄當對照。
+const PAPER_TRAIL = 180, PAPER_COST = 5, PAPER_SHEET = '模擬交易';
+function paperState_() { return JSON.parse(PropertiesService.getScriptProperties().getProperty('paper') || '{"books":{},"orders":[],"seq":0}'); }
+function paperSave_(st) { st.orders = (st.orders || []).slice(-50); PropertiesService.getScriptProperties().setProperty('paper', JSON.stringify(st)); }
+function paperSheet_() {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName(PAPER_SHEET);
+  if (!sh) { sh = ss.insertSheet(PAPER_SHEET); sh.appendRow(['時間', '策略', '動作', '方向', '價格', '損益點（已扣成本）', '備註']); }
+  return sh;
+}
+function paperLastPx_() {
+  const zs = JSON.parse(PropertiesService.getScriptProperties().getProperty('zs') || '{}');
+  return zs.bars && zs.bars.length ? zs.bars[zs.bars.length - 1].c : null;
+}
+function paperClose_(st, book, px, why, at) {
+  const pos = st.books[book]; if (!pos) return null;
+  const pnl = (px - pos.px) * pos.side - PAPER_COST;
+  st.seq++; st.orders.push({ id: st.seq, at: at, book: book, act: 'close', side: -pos.side, qty: 1, px: px, why: why });
+  paperSheet_().appendRow([new Date(at), book, '出場（' + why + '）', pos.side > 0 ? '多' : '空', px, pnl, '進場 ' + pos.px + (pos.test ? '｜測試' : '')]);
+  notify_((pnl >= 0 ? '🧪✅ 模擬出場｜' : '🧪❌ 模擬出場｜') + book + ' ' + (pos.side > 0 ? '多單' : '空單') + ' ' + fmt_(px),
+    why + '｜進場 ' + fmt_(pos.px) + ' → 出場 ' + fmt_(px) + '\n本筆 ' + (pnl >= 0 ? '+' : '') + Math.round(pnl) + ' 點（已扣 ' + PAPER_COST + ' 點成本）' + (pos.test ? '\n（測試單）' : ''), 'test_tube', 3);
+  delete st.books[book];
+  return pnl;
+}
+/** 策略訊號 → 模擬下單（同方向已有單就不動；反向先平倉再反手） */
+function paperOrder_(book, side, px, why, test) {
+  px = px || paperLastPx_(); if (!px || !side) return;
+  const st = paperState_(), now = Date.now();
+  st.books = st.books || {}; st.orders = st.orders || [];
+  const pos = st.books[book];
+  if (pos && pos.side === side) return;
+  if (pos) paperClose_(st, book, px, '反向訊號反手', now);
+  st.seq++; st.orders.push({ id: st.seq, at: now, book: book, act: 'open', side: side, qty: 1, px: px, why: why, trail: PAPER_TRAIL });
+  st.books[book] = { side: side, px: px, t: now, best: px, lastT: now, test: !!test };
+  paperSheet_().appendRow([new Date(now), book, '進場', side > 0 ? '多' : '空', px, '', why + (test ? '｜測試' : '')]);
+  notify_('🧪 模擬下單｜' + book + ' ' + (side > 0 ? '做多' : '做空') + ' 1 口 ' + fmt_(px),
+    why + '\n🛡 移動停利 ' + PAPER_TRAIL + ' 點（目前停損 ' + fmt_(px - side * PAPER_TRAIL) + '）\n（模擬交易，沒有真的下單）', 'test_tube', 3);
+  paperSave_(st);
+}
+/** 每分鐘：用 Yahoo 走完的 1 分K 更新最有利價，碰到移動停利就出場 */
+function paperTick_(d) {
+  const st = paperState_(); if (!st.books || !Object.keys(st.books).length) return;
+  const ts = d.timestamp || [], q = d.indicators.quote[0];
+  let changed = false;
+  Object.keys(st.books).forEach(book => {
+    const pos = st.books[book];
+    for (let i = 0; i < ts.length && st.books[book]; i++) {
+      const h = q.high[i], l = q.low[i]; if (h == null || l == null) continue;
+      const t = fixYahoo_(ts[i] * 1000 - 60000); if (t < pos.lastT) continue;
+      const stop = pos.best - pos.side * PAPER_TRAIL;
+      if ((pos.side > 0 && l <= stop) || (pos.side < 0 && h >= stop)) { paperClose_(st, book, stop, '移動停利 ' + PAPER_TRAIL, t + 60000); changed = true; break; }
+      pos.best = pos.side > 0 ? Math.max(pos.best, h) : Math.min(pos.best, l);
+      pos.lastT = t + 60000; changed = true;
+    }
+  });
+  if (changed) paperSave_(st);
+}
+/** App 讀取：目前倉位、最近成交、下單佇列 */
+function paperView_() {
+  const st = paperState_(), sh = paperSheet_(), n = sh.getLastRow(), k = Math.min(100, Math.max(0, n - 1));
+  const rows = k ? sh.getRange(n - k + 1, 1, k, 7).getValues() : [];
+  return { books: st.books || {}, orders: (st.orders || []).slice(-20), trail: PAPER_TRAIL, cost: PAPER_COST, px: paperLastPx_(),
+    trades: rows.map(r => ({ at: r[0] instanceof Date ? r[0].toISOString() : String(r[0]), book: r[1], act: r[2], side: r[3], px: r[4], pnl: r[5] === '' ? null : Number(r[5]), note: r[6] })) };
+}
+/** 測試：開一張測試多單、馬上平倉，確認 Telegram 和 App 都收得到（網址加 ?action=papertest&key=密碼） */
+function paperTest_() {
+  const px = paperLastPx_() || 43700;
+  paperOrder_('測試', 1, px, '🧪 串接測試', true);
+  const st = paperState_(); paperClose_(st, '測試', px + 20, '測試平倉', Date.now()); paperSave_(st);
+  return { ok: true, px: px };
 }

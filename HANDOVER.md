@@ -61,6 +61,12 @@
 - 三角單獨的預警只在 App 顯示、不推 Telegram；App 刀神分頁「Plutus 雙訊號」卡片（在五線下面）用試算表快訊重播同一套規則（signals.js 的 plutusReplay），每分鐘更新
 - 所有快訊都寫進試算表「快訊」分頁，之後可回測「雙訊號」與「雙訊號＋副圖」，也可拿來反推做類似指標
 
+### 🧪 模擬交易（2026/11/14）
+- Apps Script 紙上下單：SOP（⚡ 可立刻下單）與 Plutus（🔷 雙訊號）各一本帳、各 1 口微台；移動停利 180（每分鐘用 Yahoo 1 分K 檢查）、同策略反向訊號反手、每筆扣 5 點；進出場都推 Telegram（🧪），寫進試算表「模擬交易」分頁
+- `doGet ?action=paper` 回傳倉位、成交、下單佇列（orders）；App 刀神分頁最上面「🧪 模擬下單」卡片每分鐘讀
+- `?action=papertest&key=KEY`：開一張測試單並馬上平倉，用來測 Telegram／App
+- 之後接真單：電腦上的下單程式（台新證券 Core API，Python，Windows，要數位憑證、線上簽署、驗證下單）輪詢 orders 照單送出。待確認：使用者期貨戶能否用台新證券 API、能否下微台
+
 ### 其他
 - 監控只用已走完的 1 分K（`chartData_(symbol, true)`），收盤通知在收盤後幾十秒內發
 - 狙擊推播關閉（`NOTIFY_SNIPER=false`）

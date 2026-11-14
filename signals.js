@@ -73,3 +73,12 @@ export function plutusReplay(items) {
   }
   return { events: ev.reverse(), dbl: st.dbl ?? null, sub: st.sub ?? null, tri: st.tri ?? null, tb: st.tb ?? null, count: rows.length };
 }
+
+// ---------- 模擬交易（Apps Script 紙上下單） ----------
+export async function loadPaper() {
+  try {
+    const cfg = await fetch(`config.json?t=${Date.now()}`, { cache: "no-store" }).then(r => (r.ok ? r.json() : {}));
+    const url = cfg.signalsUrl ?? ""; if (!url) return null;
+    return await fetch(`${url}${url.includes("?") ? "&" : "?"}action=paper&t=${Date.now()}`, { cache: "no-store" }).then(r => r.json());
+  } catch (e) { return { error: e.message }; }
+}
