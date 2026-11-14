@@ -7,7 +7,7 @@ import { fmtYmd, fmtDateTime, fmtTime, weekdayOf } from "./engine/time.js";
 import { smaSeries } from "./engine/indicators.js";
 import { threeSwords, turtle, pcrView, swordSummary, SWORD_MODES } from "./engine/sword.js";
 import { kuigeModel } from "./engine/kuige.js";
-import { loadSignals } from "./signals.js";
+import { loadSignals, plutusKind, plutusReplay } from "./signals.js";
 import { fetchLive, applyLive } from "./live.js";
 import { proSniper, washout, zhanshenBand, chandelierExit, tradesFrom, CHASE_ER, fiveLines } from "./engine/myind.js";
 import { sixLevels, periodRange, SIX_RATIOS, SIX_PERIODS } from "./engine/sixlayer.js";
@@ -132,7 +132,7 @@ function render() {
   }
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
   const defs = {
-    dao: [["zs", "傑哥戰神帶狀", zsCard], ["five", "五線（均線加減碼）", fiveCard], ["ce", "多空主開關", ceCard], ["draw", "畫線看盤", drawCard], ["six", "六層第 5 層", sixMini], ["swing", "前低第二支腳", swingCard], ["sword", "三刀流", swordCard], ["sig", "TradingView 快訊", signalsCard], ["struct", "均線結構", structureCard], ["chart", "走勢圖", chartCard]],
+    dao: [["zs", "傑哥戰神帶狀", zsCard], ["five", "五線（均線加減碼）", fiveCard], ["plutus", "Plutus 雙訊號", plutusCard], ["ce", "多空主開關", ceCard], ["draw", "畫線看盤", drawCard], ["six", "六層第 5 層", sixMini], ["swing", "前低第二支腳", swingCard], ["sword", "三刀流", swordCard], ["sig", "TradingView 快訊", signalsCard], ["struct", "均線結構", structureCard], ["chart", "走勢圖", chartCard]],
     kui: [["six", "六層多空點位", sixCard], ["kuige", "葵哥三等分", kuigeCard]],
     plan: [["plan", "盤前計畫", planCard], ["review", "檢討", reviewCard]],
     more: [["ext", "外部資料", extCard], ["stats", "回測統計", statsCard], ["status", "資料狀態", statusCard]],
@@ -1005,11 +1005,36 @@ function fiveCard(c) {
 }
 
 // ---------- TradingView 快訊 ----------
+// ---------- Plutus Core：三角＝預警、三角＋頂底＝雙訊號、副圖轉強／轉弱同向＝確認 ----------
+function plutusCard(c) {
+  const sig = state.signals;
+  if (!sig || !sig.configured || sig.error) return "";
+  const P = plutusReplay(sig.items);
+  const w = s => (s > 0 ? "多" : s < 0 ? "空" : "—"), tc = s => (s > 0 ? "t-up" : s < 0 ? "t-down" : "");
+  const head = `<h2>Plutus 雙訊號（TradingView 快訊）</h2>`;
+  if (!P.count) return `<section class="card">${head}<p class="note">還沒收到 Plutus 快訊。TradingView 設好「向上三角／向下三角／底／頂／狀態轉強／狀態轉弱」快訊並勾 Webhook 後，就會出現在這裡。</p></section>`;
+  const d = P.dbl, fresh = d && Date.now() - d.at < 3 * 3600e3;
+  const ce = c.my?.ce?.dir ?? 0, zs = c.my?.zs?.dir ?? 0, f = c.my?.five;
+  const chk = (ok, txt) => `<span class="${ok ? "t-up" : ""}">${ok ? "✅" : "⚠️"} ${txt}</span>`;
+  const ctx = d ? [chk(P.sub?.side === d.side, `副圖${P.sub ? P.sub.name.replace("副圖", "") : "未知"}`), chk(ce === d.side, `主開關${w(ce)}`), chk(zs === d.side, `傑哥${w(zs)}`), chk(f && (d.side > 0 ? f.up : f.dn) >= 3, `五線${f ? (d.side > 0 ? f.up : f.dn) : 0} 條`)].join("　") : "";
+  const cls = fresh ? (d.side > 0 ? "up" : "down") : "neutral";
+  const icon = e => ({ "雙訊號": "🔷", "預警": "🔸", "副圖確認": "✅", "副圖反向": "⚠️" }[e.type] ?? "·");
+  const rows = P.events.slice(0, 10).map(e => `<div class="fr"><span>${fmtDateTime(e.at)}</span><span class="${tc(e.side)}">${icon(e)} ${esc(e.type === "預警" ? e.name : e.type)}${e.type === "雙訊號" ? `｜做${w(e.side)}` : ""}</span><b>${e.price ? fmt(e.price) : ""}</b></div>`).join("");
+  return `<section class="card sword ${cls}">
+    ${head}
+    <div class="verdict"><span class="side">${d ? `雙訊號做${w(d.side)}` : "等雙訊號"}</span><span class="mode">${d ? `${fmtDateTime(d.at)}${d.price ? `｜${fmt(d.price)}` : ""}${d.price && c.price != null ? `｜現價 ${signed((c.price - d.price) * d.side)} 點` : ""}` : ""}</span></div>
+    ${d ? `<p class="say">${ctx}</p>` : ""}
+    <p class="note">副圖目前：<b class="${tc(P.sub?.side)}">${P.sub ? esc(P.sub.name) : "還沒收到"}</b>${P.sub ? `（${fmtDateTime(P.sub.at)}）` : ""}${P.tri ? `｜最近三角：<b class="${tc(P.tri.side)}">${esc(P.tri.name)}</b> ${fmtDateTime(P.tri.at)}` : ""}</p>
+    <h3>最近訊號</h3><div class="flips">${rows}</div>
+    <p class="note">三角形會變動，只當預警；三角＋同向頂／底 30 分鐘內＝雙訊號；之後 60 分鐘內副圖同向轉＝確認、反向轉＝有單考慮減碼。Telegram 只推雙訊號、副圖確認／反向，預警只在這裡看。</p>
+  </section>`;
+}
+
 function signalsCard(c) {
   const sig = state.signals;
   if (!sig || !sig.configured) return "";
   if (sig.error) return `<section class="card"><h2>TradingView 快訊</h2><p class="note">讀不到快訊（${esc(sig.error)}）</p></section>`;
-  const list = sig.items.slice(0, 6);
+  const list = sig.items.filter(s => !plutusKind(s.text)).slice(0, 6);   // Plutus 另有自己的卡片
   if (!list.length) return `<section class="card"><h2>TradingView 快訊</h2><p class="note">還沒有收到快訊。</p></section>`;
   const latest = list[0];
   const cls = latest.side === "多" ? "up" : latest.side === "空" ? "down" : "neutral";
@@ -1047,6 +1072,7 @@ function bind() {
 document.getElementById("refresh").addEventListener("click", load);
 // 盤中每 60 秒自動抓一次即時行情；伺服器資料每 5 分鐘重抓
 setInterval(() => { if (!document.hidden && state.base) refreshLive(); }, 60_000);
+setInterval(() => { if (!document.hidden && state.base) loadSignals().then(s => { state.signals = s; render(); }); }, 60_000);   // 快訊（含 Plutus）每分鐘更新
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
 setInterval(() => { if (!document.hidden) load(); }, 5 * 60_000);
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

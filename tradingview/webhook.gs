@@ -965,7 +965,7 @@ function plutusPost_(body) {
       notify_((kd.side > 0 ? '🔷▲ Plutus 雙訊號｜做多' : '🔷▼ Plutus 雙訊號｜做空') + pxTxt,
         (kd.side > 0 ? '向上三角＋底' : '向下三角＋頂') + '\n' + subLine(kd.side) + '\n' + plutusCtx_(kd.side, props), kd.side > 0 ? 'red_circle' : 'green_circle', 5);
     } else if (kd.k === 'tri') {
-      notify_('🔸 Plutus 預警｜' + kd.name + pxTxt, '三角形會變動，等' + (kd.side > 0 ? '「底」' : '「頂」') + '出現才是雙訊號\n' + subLine(kd.side), 'warning', 2);
+      // 三角單獨＝預警：只在 App 的 Plutus 卡片顯示，不推 Telegram（避免太吵）
     }
   } else if (kd.k === 'sub') {
     st.sub = { side: kd.side, t: now, name: kd.name };
