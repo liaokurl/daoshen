@@ -18,6 +18,7 @@ function doPost(e) {
   if (!e || !e.parameter || e.parameter.key !== KEY) return ContentService.createTextOutput('forbidden');
   const body = e.postData ? e.postData.contents : '';
   sheet_().appendRow([new Date(), body]);
+  if (plutusKind_(body)) { try { plutusPost_(body); } catch (err) { console.warn('Plutus 快訊處理失敗：' + err); } return ContentService.createTextOutput('ok'); }
   try { sniperPost_(body); } catch (err) { console.warn('狙擊快訊處理失敗：' + err); }
   // TradingView 快訊（狙擊、傑哥…）也轉寄 Email；取樣器的資料不寄
   // 狙擊快訊只拿來做「雙重確認」，不另外轉發，避免通知太多
@@ -909,3 +910,77 @@ function springNotify_(bars, tf, props) {
   ].join('\n'), 'red_circle', 4);
 }
 
+
+
+// ================= Plutus Core（TradingView 快訊 → 雙訊號推播） =================
+// 使用者的看法：三角形＝提前預警（會變動）；三角形＋頂／底同向＝「雙訊號」是主要進場依據；副圖「狀態轉強／轉弱」同向更穩。
+// TradingView 每個 Plutus 快訊都打到同一個 Webhook 網址；訊息只要含「向上三角／向下三角／底／頂／狀態轉強／狀態轉弱」等字就認得。
+const PL_PAIR_MIN = 30, PL_CONFIRM_MIN = 60;   // 三角與頂底相隔 30 分鐘內算雙訊號；雙訊號後 60 分鐘內副圖轉向算確認
+function plutusKind_(t) {
+  t = String(t || '');
+  if (!/Plutus|三角|狀態轉|輔助標記/.test(t) && !/^\s*(Plutus\s*)?(訊號)?[｜|]?\s*(底|頂|支撐|阻力)\s*$/.test(t)) return null;
+  if (/向上三角|上三角/.test(t)) return { k: 'tri', side: 1, name: '向上三角' };
+  if (/向下三角|下三角/.test(t)) return { k: 'tri', side: -1, name: '向下三角' };
+  if (/狀態轉強/.test(t)) return { k: 'sub', side: 1, name: '副圖轉強' };
+  if (/狀態轉弱/.test(t)) return { k: 'sub', side: -1, name: '副圖轉弱' };
+  if (/輔助標記/.test(t)) return { k: 'misc', side: 0, name: '輔助標記更新' };
+  if (/支撐/.test(t)) return { k: 'misc', side: 1, name: '支撐' };
+  if (/阻力/.test(t)) return { k: 'misc', side: -1, name: '阻力' };
+  if (/頂/.test(t)) return { k: 'tb', side: -1, name: '頂' };
+  if (/底/.test(t)) return { k: 'tb', side: 1, name: '底' };
+  return null;
+}
+function plutusPrice_(t, props) {
+  const m = String(t).match(/(\d{2},?\d{3}(?:\.\d+)?)/);
+  if (m) return Number(m[1].replace(',', ''));
+  const zs = JSON.parse(props.getProperty('zs') || '{}');
+  return zs.bars && zs.bars.length ? zs.bars[zs.bars.length - 1].c : null;
+}
+function plutusCtx_(side, props) {
+  const ce = JSON.parse(props.getProperty('ce') || '{}').dir || 0, zs = JSON.parse(props.getProperty('zs') || '{}').dir || 0;
+  const w = d => d > 0 ? '多' : d < 0 ? '空' : '未定';
+  return [
+    (ce === side ? '✅' : '⚠️') + ' 主開關（60 分K 吊燈）＝' + w(ce),
+    (zs === side ? '✅' : '⚠️') + ' 傑哥帶狀（5 分K）＝' + w(zs),
+    fiveAlign_(side, props),
+  ].join('\n');
+}
+function plutusPost_(body) {
+  const kd = plutusKind_(body); if (!kd) return;
+  const props = PropertiesService.getScriptProperties(), now = Date.now(), M = 60000;
+  const st = JSON.parse(props.getProperty('plutus') || '{}');
+  const key = kd.k + kd.side;
+  if (st.last && st.last[key] && now - st.last[key] < 3 * M) return;   // TradingView 重送就略過
+  st.last = st.last || {}; st.last[key] = now;
+  const px = plutusPrice_(body, props), pxTxt = px ? ' ' + fmt_(px) : '';
+  const dirTxt = s => s > 0 ? '多' : '空';
+  const subLine = side => st.sub ? (st.sub.side === side ? '✅ 副圖同向（' + st.sub.name + '）' : '⚠️ 副圖還沒配合（目前' + st.sub.name + '）') : '副圖：還沒收到狀態快訊';
+  if (kd.k === 'tri' || kd.k === 'tb') {
+    st[kd.k] = { side: kd.side, t: now, name: kd.name, px: px };
+    const other = st[kd.k === 'tri' ? 'tb' : 'tri'];
+    const paired = other && other.side === kd.side && now - other.t <= PL_PAIR_MIN * M;
+    const dupDbl = st.dbl && st.dbl.side === kd.side && now - st.dbl.t < PL_CONFIRM_MIN * M;
+    if (paired && !dupDbl) {
+      st.dbl = { side: kd.side, t: now, px: px, confirmed: st.sub && st.sub.side === kd.side };
+      notify_((kd.side > 0 ? '🔷▲ Plutus 雙訊號｜做多' : '🔷▼ Plutus 雙訊號｜做空') + pxTxt,
+        (kd.side > 0 ? '向上三角＋底' : '向下三角＋頂') + '\n' + subLine(kd.side) + '\n' + plutusCtx_(kd.side, props), kd.side > 0 ? 'red_circle' : 'green_circle', 5);
+    } else if (kd.k === 'tri') {
+      notify_('🔸 Plutus 預警｜' + kd.name + pxTxt, '三角形會變動，等' + (kd.side > 0 ? '「底」' : '「頂」') + '出現才是雙訊號\n' + subLine(kd.side), 'warning', 2);
+    }
+  } else if (kd.k === 'sub') {
+    st.sub = { side: kd.side, t: now, name: kd.name };
+    if (st.dbl && !st.dbl.confirmed && now - st.dbl.t <= PL_CONFIRM_MIN * M) {
+      if (st.dbl.side === kd.side) {
+        st.dbl.confirmed = true;
+        notify_('✅ Plutus 副圖確認｜雙訊號做' + dirTxt(kd.side) + pxTxt, kd.name + '，跟 ' + Math.round((now - st.dbl.t) / M) + ' 分鐘前的雙訊號同向\n' + plutusCtx_(kd.side, props), 'white_check_mark', 4);
+      } else {
+        notify_('⚠️ Plutus 副圖反向｜' + kd.name + pxTxt, '跟 ' + Math.round((now - st.dbl.t) / M) + ' 分鐘前的雙訊號（做' + dirTxt(st.dbl.side) + '）相反，有單考慮減碼', 'warning', 4);
+      }
+    }
+  }
+  props.setProperty('plutus', JSON.stringify(st));
+}
+function testPlutus() {
+  PropertiesService.getScriptProperties().deleteProperty('plutus');
+  ['Plutus 訊號｜狀態轉強', 'Plutus 訊號｜向上三角 43705', 'Plutus 訊號｜底 43705'].forEach(t => plutusPost_(t));
+}
