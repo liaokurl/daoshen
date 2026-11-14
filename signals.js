@@ -90,3 +90,12 @@ export async function loadPaper() {
     return await fetch(`${url}${url.includes("?") ? "&" : "?"}action=paper&t=${Date.now()}`, { cache: "no-store" }).then(r => r.json());
   } catch (e) { return { error: e.message }; }
 }
+
+// ---------- 訊號紀錄統計（Apps Script reviewStats_） ----------
+export async function loadReview(days = 28) {
+  try {
+    const cfg = await fetch(`config.json?t=${Date.now()}`, { cache: "no-store" }).then(r => (r.ok ? r.json() : {}));
+    const url = cfg.signalsUrl ?? ""; if (!url) return null;
+    return await fetch(`${url}${url.includes("?") ? "&" : "?"}action=review&days=${days}&t=${Date.now()}`, { cache: "no-store" }).then(r => r.json());
+  } catch (e) { return { error: e.message }; }
+}

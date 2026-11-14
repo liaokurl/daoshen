@@ -7,7 +7,7 @@ import { fmtYmd, fmtDateTime, fmtTime, weekdayOf } from "./engine/time.js";
 import { smaSeries } from "./engine/indicators.js";
 import { threeSwords, turtle, pcrView, swordSummary, SWORD_MODES } from "./engine/sword.js";
 import { kuigeModel } from "./engine/kuige.js";
-import { loadSignals, plutusKind, plutusReplay, loadPaper } from "./signals.js";
+import { loadSignals, plutusKind, plutusReplay, loadPaper, loadReview } from "./signals.js";
 import { fetchLive, applyLive } from "./live.js";
 import { proSniper, washout, zhanshenBand, chandelierExit, tradesFrom, CHASE_ER, fiveLines } from "./engine/myind.js";
 import { sixLevels, periodRange, SIX_RATIOS, SIX_PERIODS } from "./engine/sixlayer.js";
@@ -53,6 +53,7 @@ async function load() {
   render();
   loadSignals().then(s => { state.signals = s; render(); });
   loadPaper().then(p => { state.paper = p; render(); });
+  loadReview().then(r => { state.review = r; render(); });
 }
 
 /** 只抓即時行情（不重抓 bundle） */
@@ -134,7 +135,7 @@ function render() {
   const tabs = `<nav class="tabs" role="tablist">${TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" class="${state.tab === id ? "on" : ""}">${label}</button>`).join("")}</nav>`;
   const defs = {
     dao: [["zs", "傑哥戰神帶狀", zsCard], ["five", "五線（均線加減碼）", fiveCard], ["plutus", "Plutus 雙訊號", plutusCard], ["ce", "多空主開關", ceCard], ["draw", "畫線看盤", drawCard], ["six", "六層第 5 層", sixMini], ["swing", "前低第二支腳", swingCard], ["sword", "三刀流", swordCard], ["sig", "TradingView 快訊", signalsCard], ["struct", "均線結構", structureCard], ["chart", "走勢圖", chartCard]],
-    sim: [["paper", "🧪 模擬單", paperCard]],
+    sim: [["paper", "🧪 模擬單", paperCard], ["review", "📊 訊號復盤", reviewSigCard]],
     kui: [["six", "六層多空點位", sixCard], ["kuige", "葵哥三等分", kuigeCard]],
     plan: [["plan", "盤前計畫", planCard], ["review", "檢討", reviewCard]],
     more: [["ext", "外部資料", extCard], ["stats", "回測統計", statsCard], ["status", "資料狀態", statusCard]],
@@ -1034,6 +1035,25 @@ function paperCard(c) {
   const cmp = names.map(b => { const T = all.filter(t => t.book === b && t.pnl != null), tot = T.reduce((a, t) => a + t.pnl, 0); return `<div class="fr"><span>${esc(b)}</span><span>${T.length} 筆｜勝率 ${T.length ? Math.round(T.filter(t => t.pnl > 0).length / T.length * 100) : 0}%</span><b class="${tot >= 0 ? "t-up" : "t-down"}">${signed(Math.round(tot))} 點</b></div>`; }).join("");
   return `<section class="card"><h2>🧪 模擬單總覽</h2><div class="flips">${cmp}</div>
     <p class="note">訊號一出現就用當下價格模擬成交 1 口微台，每筆扣 ${P.cost} 點。SOP 兩本帳進出場訊號一樣，只差移動停利 120／180，也會在傑哥反向翻時出場（跟回測同規則）；Plutus 用雙訊號進場、反向雙訊號反手、移動停利 180。打到停損就自動出場並推播。沒有真的下單。</p></section>` + names.map(b => one(b, cfg[b])).join("");
+}
+
+// ---------- 📊 訊號復盤：每個訊號 240 分鐘後的結果，依條件分組 ----------
+function reviewSigCard() {
+  const R = state.review;
+  const head = `<h2>📊 訊號復盤（近 ${R?.days ?? 28} 天）</h2>`;
+  if (!R) return `<section class="card">${head}<p class="note">讀取中…</p></section>`;
+  if (R.error) return `<section class="card">${head}<p class="note">讀不到（${esc(R.error)}）</p></section>`;
+  const note = `<p class="note">每個訊號（傑哥翻向、⚡SOP、主開關轉向、五線進場、Plutus 三角／關注／雙訊號）出現時，記下當下條件：主開關、傑哥、五線、副圖是否同向（順勢分數 0～4）、追價效率、日夜盤；之後追蹤 240 分鐘。<br>「平均」＝240 分後順訊號方向的點數；「先到+180」＝先漲到 +180 才碰 −180 的比例；「逆向」＝進場後最多被套幾點，越小代表位子越好。每週六清晨自動發復盤到群組。</p>`;
+  if (!R.n) return `<section class="card">${head}<p class="say">開始記錄了，還在累積資料${R.pending ? `（追蹤中 ${R.pending} 筆，240 分鐘後寫入）` : ""}。</p>${note}</section>`;
+  const sg = v => signed(Math.round(v)), pc = v => `${Math.round(v * 100)}%`;
+  const row = o => `<div class="fr"><span>${esc(o.key)}</span><span>${o.n} 筆｜勝率 ${pc(o.winRate)}｜先到+180 ${pc(o.hitUp)}｜逆向 ${Math.round(o.mae)}</span><b class="${o.avg >= 0 ? "t-up" : "t-down"}">${sg(o.avg)}</b></div>`;
+  const main = R.groups.filter(o => !o.key.includes("｜"));
+  const sub = R.groups.filter(o => o.key.includes("｜") && o.n >= 3);
+  return `<section class="card">${head}
+    <p class="say">共 ${R.n} 筆已完成${R.pending ? `，追蹤中 ${R.pending} 筆` : ""}</p>
+    <h3>各訊號</h3><div class="flips">${main.map(row).join("")}</div>
+    ${sub.length ? `<h3>條件組合（至少 3 筆，平均高到低）</h3><div class="flips">${sub.map(row).join("")}</div>` : ""}
+    ${note}</section>`;
 }
 
 function plutusCard(c) {

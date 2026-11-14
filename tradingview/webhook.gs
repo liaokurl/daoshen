@@ -11,6 +11,8 @@ function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.action === 'chart') return chart_(p.symbol || 'WTX&');
   if (p.action === 'paper') return json_(paperView_());
+  if (p.action === 'review') return json_(reviewStats_(Number(p.days) || 28));
+  if (p.action === 'reviewsend' && p.key === KEY) { weeklyReview_(); return json_({ ok: true }); }
   if (p.action === 'papertest' && p.key === KEY) return json_(paperTest_());
   if (p.action === 'charts') return json_({ WTX: chartData_('WTX&'), WTM: chartData_('WTM&'), at: new Date().toISOString() });
   return signals_(p);
@@ -118,6 +120,8 @@ function monitor() {
     const props = PropertiesService.getScriptProperties();
     try { remindTick_(props); } catch (err) { console.warn('重複提醒失敗：' + err); }
     try { paperTick_(d); } catch (err) { console.warn('模擬交易更新失敗：' + err); }
+    try { sigTick_(d); } catch (err) { console.warn('訊號紀錄更新失敗：' + err); }
+    try { weeklyMaybe_(); } catch (err) { console.warn('每週復盤失敗：' + err); }
     try { rollFix_(props); } catch (err) { console.warn('換月處理失敗：' + err); }
     const st = JSON.parse(props.getProperty('zs') || '{"bars":[],"dir":0,"pend":0,"cnt":0,"lastT":0}');
     // 1 分K → 5 分K（Yahoo 時間是分鐘結束）
@@ -158,6 +162,7 @@ function monitor() {
         props.setProperty('zsFlip', JSON.stringify({ t: b.t + 300000, side: st.dir, px: b.c, ce: (JSON.parse(props.getProperty('ce') || '{}').dir || 0) }));
         const er = effRatio_(bars.slice(0, i + 1).map(x => x.c));
         if (!quiet) {
+          sigLog_('傑哥翻向', st.dir, b.c, { zs: st.dir, er: er });
           const title = (er != null && er >= CHASE_ER ? '⛔ 追價別進｜' : '') + entryTitle_(st.dir, b.c), body = entryBody_(st.dir, b.c, timeTxt, up, lo, props, d, b.t + 300000, er);
           notify_(title, body, st.dir > 0 ? 'red_circle' : 'green_circle', 5);
           const ce = JSON.parse(props.getProperty('ce') || '{}').dir || 0;
@@ -262,7 +267,9 @@ function fivePush_(props, b) {
     const dir = (JSON.parse(props.getProperty('ce') || '{}').dir) || 0;
     const r = fiveStep_(f5.pos, f5.c, f5.c.length - 1, dir);
     f5.pos = r.pos;
-    if (NOTIFY_FIVE && r.ev.length && fixYahoo_(b.t) + 300000 > Date.now() - 20 * 60000) fiveNotify_(r.ev, r.pos, b);   // 補算的舊 K 棒不發
+    const live5 = fixYahoo_(b.t) + 300000 > Date.now() - 20 * 60000;
+    if (live5) r.ev.filter(e => /進場/.test(e.k)).forEach(e => sigLog_('五線進場', e.side, e.p, {}));
+    if (NOTIFY_FIVE && r.ev.length && live5) fiveNotify_(r.ev, r.pos, b);   // 補算的舊 K 棒不發
   }
   props.setProperty('f5', JSON.stringify(f5));
 }
@@ -300,6 +307,7 @@ function tgSendTo_(chat, html) {
   });
 }
 function entryAlert_(props, dir, px, body) {
+  sigLog_('⚡SOP', dir, px, { zs: dir });
   try { paperOrder_('SOP', dir, px, '⚡ SOP 全部符合'); } catch (err) { console.warn('模擬下單失敗：' + err); }
   // 原本群組也另發一則短的「⚡ 可立刻下單」，跟一般翻向通知分開，一眼就看得到
   try {
@@ -475,6 +483,7 @@ function ceUpdate_(d, props) {
   if (st.dir !== 0 && e.dir !== st.dir) {
     const timeTxt = Utilities.formatDate(new Date(last.t + H), 'Asia/Taipei', 'MM/dd HH:mm');
     const line = e.dir > 0 ? e.longStop : e.shortStop;
+    sigLog_('主開關轉向', e.dir, last.c, { ce: e.dir });
     notify_(`🔔 主開關轉${e.dir > 0 ? '多' : '空'}｜微台 ${fmt_(last.c)}`,
       `${timeTxt} 60 分K 收盤${e.dir > 0 ? '站上空方防守線' : '跌破多方防守線'}\n之後只找${e.dir > 0 ? '多' : '空'}單；60 分K 收盤${e.dir > 0 ? '跌破' : '站上'} ${fmt_(line)} 才再轉向` + reentryLine_(e.dir, props),
       e.dir > 0 ? 'red_circle' : 'green_circle', 5);
@@ -967,11 +976,13 @@ function plutusPost_(body) {
     const dupDbl = st.dbl && st.dbl.side === kd.side && now - st.dbl.t < PL_CONFIRM_MIN * M;
     if (paired && !dupDbl) {
       st.dbl = { side: kd.side, t: now, px: px, confirmed: st.sub && st.sub.side === kd.side };
+      sigLog_('Plutus雙訊號', kd.side, px, {});
       try { paperOrder_('Plutus', kd.side, px, '🔷 Plutus 雙訊號'); } catch (err) { console.warn('模擬下單失敗：' + err); }
       notify_((kd.side > 0 ? '🔷▲ Plutus 雙訊號｜做多' : '🔷▼ Plutus 雙訊號｜做空') + pxTxt,
         (kd.side > 0 ? '向上三角＋底' : '向下三角＋頂') + '\n' + subLine(kd.side) + '\n' + plutusCtx_(kd.side, props), kd.side > 0 ? 'red_circle' : 'green_circle', 5);
     } else if (kd.k === 'tri') {
       // 三角單獨＝預警：只在 App 的 Plutus 卡片顯示，不推 Telegram（避免太吵）
+      sigLog_('Plutus三角', kd.side, px, {});
     }
   }
   // 三角＋撐／阻（社群用法：先列入關注，等上副圖同向再加強）；只在沒有同向雙訊號時才發
@@ -983,6 +994,7 @@ function plutusPost_(body) {
     const dblNow = st.dbl && st.dbl.side === kd.side && now - st.dbl.t < PL_CONFIRM_MIN * M;
     if (pair && !dupF && !dblNow) {
       st.focus = { side: kd.side, t: now, px: px, confirmed: st.sub && st.sub.side === kd.side && now - st.sub.t <= PL_CONFIRM_MIN * M };
+      sigLog_('Plutus關注', kd.side, px, {});
       notify_('🔶 Plutus 關注｜' + (kd.side > 0 ? '向上三角＋撐' : '向下三角＋阻') + pxTxt,
         '先列入關注，等上副圖同向再加強\n' + subLine(kd.side) + '\n' + plutusCtx_(kd.side, props), 'large_orange_diamond', 3);
     }
@@ -1104,4 +1116,113 @@ function paperTest_() {
   paperOrder_('測試', 1, px, '🧪 串接測試', true);
   const st = paperState_(); paperNotifyClose_([paperClose_(st, '測試', px + 20, '測試平倉', Date.now())], '模擬出場｜測試'); paperSave_(st);
   return { ok: true, px: px };
+}
+
+
+// ================= 訊號紀錄：每個訊號記下當時條件，之後 240 分鐘追蹤走勢，用來找「什麼訊號值得下單」 =================
+// 結果欄位（點數都是「順訊號方向」）：30／60／120／240 分後、240 分內最大順向（MFE）、最大逆向（MAE＝進場成本好不好）、先到 +180 還是 −180
+const SIG_SHEET = '訊號紀錄', SIG_HORIZON = 240, SIG_HIT = 180;
+const SIG_HEAD = ['時間', '類型', '方向', '價格', '主開關', '傑哥', '五線同向', '副圖', '追價效率', '時段', '30分', '60分', '120分', '240分', '最大順向', '最大逆向', '先到', '順勢分數'];
+function sigSheet_() {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName(SIG_SHEET);
+  if (!sh) { sh = ss.insertSheet(SIG_SHEET); sh.appendRow(SIG_HEAD); sh.setFrozenRows(1); }
+  return sh;
+}
+function sigCtx_(side, o) {
+  const props = PropertiesService.getScriptProperties();
+  const zsSt = JSON.parse(props.getProperty('zs') || '{}');
+  const ce = o.ce != null ? o.ce : (JSON.parse(props.getProperty('ce') || '{}').dir || 0);
+  const zs = o.zs != null ? o.zs : (zsSt.dir || 0);
+  let five = null;
+  const f5 = JSON.parse(props.getProperty('f5') || 'null');
+  if (f5 && f5.c && f5.c.length >= 242) five = fiveCount_(f5.c, f5.c.length - 1, side);
+  const pl = JSON.parse(props.getProperty('plutus') || '{}');
+  const sub = pl.sub && Date.now() - pl.sub.t < 180 * 60000 ? pl.sub.side : 0;
+  const er = o.er != null ? o.er : (zsSt.bars && zsSt.bars.length > 25 ? effRatio_(zsSt.bars.map(x => x.c)) : null);
+  const tp = new Date(Date.now() + 8 * H), m = tp.getUTCHours() * 60 + tp.getUTCMinutes();
+  const sess = m >= 8 * 60 + 45 && m < 13 * 60 + 45 ? '日盤' : '夜盤';
+  const score = (ce === side ? 1 : 0) + (zs === side ? 1 : 0) + (five != null && five >= 3 ? 1 : 0) + (sub === side ? 1 : 0);
+  return { ce: ce, zs: zs, five: five, sub: sub, er: er, sess: sess, score: score };
+}
+/** 記一個訊號：先放進追蹤清單，240 分鐘後寫進試算表 */
+function sigLog_(type, side, px, o) {
+  try {
+    px = px || paperLastPx_(); if (!px || !side) return;
+    const props = PropertiesService.getScriptProperties(), q = JSON.parse(props.getProperty('sigq') || '[]'), now = Date.now();
+    if (q.some(x => x.type === type && x.side === side && now - x.t < 3 * 60000)) return;
+    q.push({ t: now, type: type, side: side, px: px, ctx: sigCtx_(side, o || {}), mfe: 0, mae: 0, at: {}, first: '', lastT: now });
+    props.setProperty('sigq', JSON.stringify(q.slice(-40)));
+  } catch (err) { console.warn('記錄訊號失敗：' + err); }
+}
+function sigTick_(d) {
+  const props = PropertiesService.getScriptProperties();
+  let q = JSON.parse(props.getProperty('sigq') || '[]'); if (!q.length) return;
+  const ts = d.timestamp || [], qq = d.indicators.quote[0], now = Date.now(), done = [];
+  q.forEach(x => {
+    for (let i = 0; i < ts.length; i++) {
+      const h = qq.high[i], l = qq.low[i], c = qq.close[i]; if (h == null || l == null || c == null) continue;
+      const t = fixYahoo_(ts[i] * 1000 - 60000); if (t < x.lastT || t >= x.t + SIG_HORIZON * 60000) continue;
+      const fav = x.side > 0 ? h - x.px : x.px - l, adv = x.side > 0 ? x.px - l : h - x.px;
+      if (!x.first) { if (adv >= SIG_HIT && fav >= SIG_HIT) x.first = '同根'; else if (fav >= SIG_HIT) x.first = '+' + SIG_HIT; else if (adv >= SIG_HIT) x.first = '-' + SIG_HIT; }
+      x.mfe = Math.max(x.mfe, fav); x.mae = Math.max(x.mae, adv);
+      const mins = (t + 60000 - x.t) / 60000;
+      [30, 60, 120, 240].forEach(k => { if (mins >= k && x.at[k] == null) x.at[k] = Math.round((c - x.px) * x.side); });
+      x.lastT = t + 60000;
+    }
+    if (now - x.t >= SIG_HORIZON * 60000) done.push(x);
+  });
+  if (done.length) {
+    const sh = sigSheet_(), w = v => v > 0 ? '多' : v < 0 ? '空' : '—';
+    done.forEach(x => sh.appendRow([new Date(x.t), x.type, w(x.side), x.px, w(x.ctx.ce), w(x.ctx.zs), x.ctx.five == null ? '' : x.ctx.five, w(x.ctx.sub),
+      x.ctx.er == null ? '' : Math.round(x.ctx.er * 100) / 100, x.ctx.sess, x.at[30] != null ? x.at[30] : '', x.at[60] != null ? x.at[60] : '', x.at[120] != null ? x.at[120] : '', x.at[240] != null ? x.at[240] : '',
+      Math.round(x.mfe), Math.round(x.mae), x.first || '都沒到', x.ctx.score]));
+    q = q.filter(x => done.indexOf(x) < 0);
+  }
+  props.setProperty('sigq', JSON.stringify(q));
+}
+/** 統計：依「類型」與「類型×順勢分數」分組，算勝率（240 分後為正）、平均點數、先到 +180 的比例、平均逆向（進場成本） */
+function reviewStats_(days) {
+  const sh = sigSheet_(), n = sh.getLastRow(); if (n < 2) return { groups: [], n: 0, pending: JSON.parse(PropertiesService.getScriptProperties().getProperty('sigq') || '[]').length };
+  const from = Date.now() - days * 24 * H;
+  const rows = sh.getRange(2, 1, n - 1, SIG_HEAD.length).getValues().filter(r => r[0] instanceof Date && r[0].getTime() >= from);
+  const g = {};
+  const add = (k, r) => {
+    const v = Number(r[13]); if (r[13] === '' || isNaN(v)) return;
+    const o = g[k] = g[k] || { key: k, n: 0, win: 0, sum: 0, hitUp: 0, hitDn: 0, mae: 0, mfe: 0 };
+    o.n++; o.sum += v; if (v > 0) o.win++; if (r[16] === '+' + SIG_HIT) o.hitUp++; if (r[16] === '-' + SIG_HIT) o.hitDn++; o.mae += Number(r[15]) || 0; o.mfe += Number(r[14]) || 0;
+  };
+  rows.forEach(r => {
+    add(r[1], r);
+    add(r[1] + '｜順勢 ' + r[17] + '/4', r);
+    add(r[1] + '｜' + (r[4] === r[2] ? '順主開關' : '逆主開關'), r);
+    add(r[1] + '｜' + r[9], r);
+  });
+  const groups = Object.keys(g).map(k => { const o = g[k]; return { key: k, n: o.n, winRate: o.win / o.n, avg: o.sum / o.n, hitUp: o.hitUp / o.n, hitDn: o.hitDn / o.n, mae: o.mae / o.n, mfe: o.mfe / o.n }; })
+    .sort((a, b) => b.avg - a.avg);
+  return { days: days, n: rows.length, groups: groups, pending: JSON.parse(PropertiesService.getScriptProperties().getProperty('sigq') || '[]').length };
+}
+/** 每週復盤：週六夜盤收盤後（05:00 起）自動發一次；網址 ?action=reviewsend&key=密碼 可手動觸發 */
+function weeklyMaybe_() {
+  const t = new Date(Date.now() + 8 * H); if (t.getUTCDay() !== 6 || t.getUTCHours() !== 5) return;
+  const props = PropertiesService.getScriptProperties(), wk = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd');
+  if (props.getProperty('weeklyDone') === wk) return;
+  props.setProperty('weeklyDone', wk);
+  weeklyReview_();
+}
+function weeklyReview_() {
+  const R = reviewStats_(7), A = reviewStats_(28), sg = v => (v >= 0 ? '+' : '') + Math.round(v);
+  const line = o => o.key + '：' + o.n + ' 筆｜勝率 ' + Math.round(o.winRate * 100) + '%｜平均 ' + sg(o.avg) + '｜先到+180 ' + Math.round(o.hitUp * 100) + '%｜平均逆向 ' + Math.round(o.mae);
+  const main = R.groups.filter(o => o.key.indexOf('｜') < 0);
+  const best = A.groups.filter(o => o.key.indexOf('｜') >= 0 && o.n >= 5).slice(0, 5);
+  const worst = A.groups.filter(o => o.key.indexOf('｜') >= 0 && o.n >= 5).slice(-3).reverse();
+  // 模擬單本週成績
+  const P = paperView_(), wk = Date.now() - 7 * 24 * H, books = {};
+  P.trades.filter(t => t.pnl != null && Date.parse(t.at) >= wk && !/測試/.test(String(t.note) + t.book)).forEach(t => { const b = books[t.book] = books[t.book] || { n: 0, w: 0, s: 0 }; b.n++; b.s += t.pnl; if (t.pnl > 0) b.w++; });
+  const paper = Object.keys(books).map(k => k + '：' + books[k].n + ' 筆｜勝率 ' + Math.round(books[k].w / books[k].n * 100) + '%｜' + sg(books[k].s) + ' 點').join('\n') || '本週沒有模擬成交';
+  notify_('📊 每週復盤｜' + Utilities.formatDate(new Date(), 'Asia/Taipei', 'MM/dd'),
+    '【本週各訊號（240 分後順向點數）】\n' + (main.map(line).join('\n') || '本週訊號還沒滿 240 分鐘') +
+    '\n\n【近 4 週最值得做（至少 5 筆）】\n' + (best.map(line).join('\n') || '資料還不夠') +
+    '\n\n【近 4 週最不值得做】\n' + (worst.map(line).join('\n') || '資料還不夠') +
+    '\n\n【模擬單本週】\n' + paper, 'bar_chart', 3);
 }
