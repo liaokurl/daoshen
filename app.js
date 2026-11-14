@@ -1048,7 +1048,7 @@ function plutusCard(c) {
   const chk = (ok, txt) => `<span class="${ok ? "t-up" : ""}">${ok ? "✅" : "⚠️"} ${txt}</span>`;
   const ctx = d ? [chk(P.sub?.side === d.side, `副圖${P.sub ? P.sub.name.replace("副圖", "") : "未知"}`), chk(ce === d.side, `主開關${w(ce)}`), chk(zs === d.side, `傑哥${w(zs)}`), chk(f && (d.side > 0 ? f.up : f.dn) >= 3, `五線${f ? (d.side > 0 ? f.up : f.dn) : 0} 條`)].join("　") : "";
   const cls = fresh ? (d.side > 0 ? "up" : "down") : "neutral";
-  const icon = e => ({ "雙訊號": "🔷", "預警": "🔸", "副圖確認": "✅", "副圖反向": "⚠️" }[e.type] ?? "·");
+  const icon = e => ({ "雙訊號": "🔷", "關注": "🔶", "預警": "🔸", "副圖確認": "✅", "副圖反向": "⚠️" }[e.type] ?? "·");
   const rows = P.events.slice(0, 10).map(e => `<div class="fr"><span>${fmtDateTime(e.at)}</span><span class="${tc(e.side)}">${icon(e)} ${esc(e.type === "預警" ? e.name : e.type)}${e.type === "雙訊號" ? `｜做${w(e.side)}` : ""}</span><b>${e.price ? fmt(e.price) : ""}</b></div>`).join("");
   return `<section class="card sword ${cls}">
     ${head}
@@ -1056,7 +1056,7 @@ function plutusCard(c) {
     ${d ? `<p class="say">${ctx}</p>` : ""}
     <p class="note">副圖目前：<b class="${tc(P.sub?.side)}">${P.sub ? esc(P.sub.name) : "還沒收到"}</b>${P.sub ? `（${fmtDateTime(P.sub.at)}）` : ""}${P.tri ? `｜最近三角：<b class="${tc(P.tri.side)}">${esc(P.tri.name)}</b> ${fmtDateTime(P.tri.at)}` : ""}</p>
     <h3>最近訊號</h3><div class="flips">${rows}</div>
-    <p class="note">三角形會變動，只當預警；三角＋同向頂／底 30 分鐘內＝雙訊號；之後 60 分鐘內副圖同向轉＝確認、反向轉＝有單考慮減碼。Telegram 只推雙訊號、副圖確認／反向，預警只在這裡看。</p>
+    <p class="note">三角形會變動，只當預警；三角＋同向頂／底 30 分鐘內＝雙訊號；三角＋撐／阻＝關注（等上副圖同向）；之後 60 分鐘內副圖同向轉＝確認、反向轉＝有單考慮減碼。Telegram 只推雙訊號、副圖確認／反向，預警只在這裡看。</p>
   </section>`;
 }
 

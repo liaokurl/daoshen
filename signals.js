@@ -42,8 +42,8 @@ export function plutusKind(t) {
   if (/狀態轉強/.test(t)) return { k: "sub", side: 1, name: "副圖轉強" };
   if (/狀態轉弱/.test(t)) return { k: "sub", side: -1, name: "副圖轉弱" };
   if (/輔助標記/.test(t)) return { k: "misc", side: 0, name: "輔助標記更新" };
-  if (/支撐/.test(t)) return { k: "misc", side: 1, name: "支撐" };
-  if (/阻力/.test(t)) return { k: "misc", side: -1, name: "阻力" };
+  if (/支撐/.test(t)) return { k: "sr", side: 1, name: "撐" };
+  if (/阻力/.test(t)) return { k: "sr", side: -1, name: "阻" };
   if (/頂/.test(t)) return { k: "tb", side: -1, name: "頂" };
   if (/底/.test(t)) return { k: "tb", side: 1, name: "底" };
   return null;
@@ -63,7 +63,15 @@ export function plutusReplay(items) {
       const dup = st.dbl && st.dbl.side === kd.side && at - st.dbl.at < PL_CONFIRM_MIN * M;
       if (paired && !dup) { st.dbl = { side: kd.side, at, price: r.price ?? other.price, confirmed: st.sub?.side === kd.side }; ev.push({ type: "雙訊號", side: kd.side, at, price: st.dbl.price, sub: st.sub?.side === kd.side }); }
       else ev.push({ type: kd.k === "tri" ? "預警" : kd.name, side: kd.side, at, price: r.price, name: kd.name });
-    } else if (kd.k === "sub") {
+    } else if (kd.k === "sr") {
+      st.sr = { side: kd.side, at, name: kd.name };
+      ev.push({ type: kd.name, side: kd.side, at, price: r.price });
+    }
+    if ((kd.k === "tri" || kd.k === "sr") && st.tri && st.sr && st.tri.side === st.sr.side && Math.abs(st.tri.at - st.sr.at) <= PL_PAIR_MIN * M
+        && !(st.focus && st.focus.side === kd.side && at - st.focus.at < PL_CONFIRM_MIN * M) && !(st.dbl && st.dbl.side === kd.side && at - st.dbl.at < PL_CONFIRM_MIN * M)) {
+      st.focus = { side: kd.side, at }; ev.push({ type: "關注", side: kd.side, at, price: r.price });
+    }
+    if (kd.k === "sub") {
       st.sub = { side: kd.side, at, name: kd.name };
       if (st.dbl && !st.dbl.confirmed && at - st.dbl.at <= PL_CONFIRM_MIN * M) {
         if (st.dbl.side === kd.side) { st.dbl.confirmed = true; ev.push({ type: "副圖確認", side: kd.side, at }); }

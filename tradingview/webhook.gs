@@ -929,8 +929,8 @@ function plutusKind_(t) {
   if (/狀態轉強/.test(t)) return { k: 'sub', side: 1, name: '副圖轉強' };
   if (/狀態轉弱/.test(t)) return { k: 'sub', side: -1, name: '副圖轉弱' };
   if (/輔助標記/.test(t)) return { k: 'misc', side: 0, name: '輔助標記更新' };
-  if (/支撐/.test(t)) return { k: 'misc', side: 1, name: '支撐' };
-  if (/阻力/.test(t)) return { k: 'misc', side: -1, name: '阻力' };
+  if (/支撐/.test(t)) return { k: 'sr', side: 1, name: '撐' };
+  if (/阻力/.test(t)) return { k: 'sr', side: -1, name: '阻' };
   if (/頂/.test(t)) return { k: 'tb', side: -1, name: '頂' };
   if (/底/.test(t)) return { k: 'tb', side: 1, name: '底' };
   return null;
@@ -973,8 +973,26 @@ function plutusPost_(body) {
     } else if (kd.k === 'tri') {
       // 三角單獨＝預警：只在 App 的 Plutus 卡片顯示，不推 Telegram（避免太吵）
     }
-  } else if (kd.k === 'sub') {
+  }
+  // 三角＋撐／阻（社群用法：先列入關注，等上副圖同向再加強）；只在沒有同向雙訊號時才發
+  if (kd.k === 'tri' || kd.k === 'sr') {
+    if (kd.k === 'sr') st.sr = { side: kd.side, t: now, name: kd.name, px: px };
+    const a = st.tri, b = st.sr;
+    const pair = a && b && a.side === b.side && Math.abs(a.t - b.t) <= PL_PAIR_MIN * M;
+    const dupF = st.focus && st.focus.side === kd.side && now - st.focus.t < PL_CONFIRM_MIN * M;
+    const dblNow = st.dbl && st.dbl.side === kd.side && now - st.dbl.t < PL_CONFIRM_MIN * M;
+    if (pair && !dupF && !dblNow) {
+      st.focus = { side: kd.side, t: now, px: px, confirmed: st.sub && st.sub.side === kd.side && now - st.sub.t <= PL_CONFIRM_MIN * M };
+      notify_('🔶 Plutus 關注｜' + (kd.side > 0 ? '向上三角＋撐' : '向下三角＋阻') + pxTxt,
+        '先列入關注，等上副圖同向再加強\n' + subLine(kd.side) + '\n' + plutusCtx_(kd.side, props), 'large_orange_diamond', 3);
+    }
+  }
+  if (kd.k === 'sub') {
     st.sub = { side: kd.side, t: now, name: kd.name };
+    if (st.focus && !st.focus.confirmed && st.focus.side === kd.side && now - st.focus.t <= PL_CONFIRM_MIN * M && !(st.dbl && now - st.dbl.t <= PL_CONFIRM_MIN * M)) {
+      st.focus.confirmed = true;
+      notify_('✅ Plutus 關注加強｜' + (kd.side > 0 ? '三角＋撐＋副圖轉強' : '三角＋阻＋副圖轉弱') + pxTxt, '跟 ' + Math.round((now - st.focus.t) / M) + ' 分鐘前的關注同向\n' + plutusCtx_(kd.side, props), 'white_check_mark', 4);
+    }
     if (st.dbl && !st.dbl.confirmed && now - st.dbl.t <= PL_CONFIRM_MIN * M) {
       if (st.dbl.side === kd.side) {
         st.dbl.confirmed = true;
