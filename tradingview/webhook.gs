@@ -1006,7 +1006,7 @@ function plutusPost_(body) {
   }
   // 三角＋撐／阻（社群用法：先列入關注，等上副圖同向再加強）；只在沒有同向雙訊號時才發
   if (kd.k === 'tri' || kd.k === 'sr') {
-    if (kd.k === 'sr') st.sr = { side: kd.side, t: now, name: kd.name, px: px };
+    if (kd.k === 'sr') { st.sr = { side: kd.side, t: now, name: kd.name, px: px }; sigLog_('Plutus撐阻', kd.side, px, {}); }
     const a = st.tri, b = st.sr;
     const pair = a && b && a.side === b.side && Math.abs(a.t - b.t) <= PL_PAIR_MIN * M;
     const dupF = st.focus && st.focus.side === kd.side && now - st.focus.t < PL_CONFIRM_MIN * M;
@@ -1019,6 +1019,7 @@ function plutusPost_(body) {
     }
   }
   if (kd.k === 'sub') {
+    sigLog_('Plutus副圖', kd.side, px, {});
     st.sub = { side: kd.side, t: now, name: kd.name };
     if (st.focus && !st.focus.confirmed && st.focus.side === kd.side && now - st.focus.t <= PL_CONFIRM_MIN * M && !(st.dbl && now - st.dbl.t <= PL_CONFIRM_MIN * M)) {
       st.focus.confirmed = true;
@@ -1142,6 +1143,19 @@ function paperTest_() {
 // 結果欄位（點數都是「順訊號方向」）：30／60／120／240 分後、240 分內最大順向（MFE）、最大逆向（MAE＝進場成本好不好）、先到 +180 還是 −180
 const SIG_SHEET = '訊號紀錄', SIG_HORIZON = 240, SIG_HIT = 180;
 const SIG_HEAD = ['時間', '類型', '方向', '價格', '主開關', '傑哥', '五線同向', '副圖', '追價效率', '時段', '30分', '60分', '120分', '240分', '最大順向', '最大逆向', '先到', '順勢分數'];
+// 追蹤清單分段存（指令碼屬性單筆上限約 9KB，訊號多的日子一筆放不下）
+function sigqGet_(props) {
+  const n = Number(props.getProperty('sigqN') || 0);
+  if (!n) return JSON.parse(props.getProperty('sigq') || '[]');   // 舊格式
+  let t = ''; for (let k = 0; k < n; k++) t += props.getProperty('sigq' + k) || '';
+  try { return JSON.parse(t || '[]'); } catch (err) { return []; }
+}
+function sigqSet_(props, q) {
+  const t = JSON.stringify(q.slice(-120)), n = Math.max(1, Math.ceil(t.length / 4000)), old = Number(props.getProperty('sigqN') || 0);
+  for (let k = 0; k < n; k++) props.setProperty('sigq' + k, t.slice(k * 4000, (k + 1) * 4000));
+  for (let k = n; k < old; k++) props.deleteProperty('sigq' + k);
+  props.setProperty('sigqN', String(n)); props.deleteProperty('sigq');
+}
 function sigSheet_() {
   const ss = SpreadsheetApp.getActive();
   let sh = ss.getSheetByName(SIG_SHEET);
@@ -1168,15 +1182,15 @@ function sigCtx_(side, o) {
 function sigLog_(type, side, px, o) {
   try {
     px = px || paperLastPx_(); if (!px || !side) return;
-    const props = PropertiesService.getScriptProperties(), q = JSON.parse(props.getProperty('sigq') || '[]'), now = Date.now();
+    const props = PropertiesService.getScriptProperties(), q = sigqGet_(props), now = Date.now();
     if (q.some(x => x.type === type && x.side === side && now - x.t < 3 * 60000)) return;
     q.push({ t: now, type: type, side: side, px: px, ctx: sigCtx_(side, o || {}), mfe: 0, mae: 0, at: {}, first: '', lastT: now });
-    props.setProperty('sigq', JSON.stringify(q.slice(-40)));
+    sigqSet_(props, q);
   } catch (err) { console.warn('記錄訊號失敗：' + err); }
 }
 function sigTick_(d) {
   const props = PropertiesService.getScriptProperties();
-  let q = JSON.parse(props.getProperty('sigq') || '[]'); if (!q.length) return;
+  let q = sigqGet_(props); if (!q.length) return;
   const ts = d.timestamp || [], qq = d.indicators.quote[0], now = Date.now(), done = [];
   q.forEach(x => {
     for (let i = 0; i < ts.length; i++) {
@@ -1198,7 +1212,7 @@ function sigTick_(d) {
       Math.round(x.mfe), Math.round(x.mae), x.first || '都沒到', x.ctx.score]));
     q = q.filter(x => done.indexOf(x) < 0);
   }
-  props.setProperty('sigq', JSON.stringify(q));
+  sigqSet_(props, q);
 }
 /** 統計：依「類型」與「類型×順勢分數」分組，算勝率（240 分後為正）、平均點數、先到 +180 的比例、平均逆向（進場成本） */
 function reviewStats_(days) {
