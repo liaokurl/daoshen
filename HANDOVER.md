@@ -121,3 +121,10 @@
 
 - App 傑哥卡片的翻向表是「翻向就反手」的算法，不是 SOP 的成績
 - 回測可以用 repo 裡的 `data/ticks/*.json`（tmf5 官方 5 分K）＋`data/provisional5/*.json`（Yahoo）自己組序列
+
+## 11/16 Webhook 改成「先收再處理」
+
+- 症狀：TradingView 快訊日誌出現「Webhook發送失敗 — request took too long and timed out」。TradingView 只等 3 秒，原本 doPost 當場寫試算表、判斷 Plutus、推 Telegram，超過 3 秒。
+- 改法：`doPost` 只把快訊存進指令碼屬性佇列（`q_時間_亂數`）就回 ok；`monitor` 每分鐘開頭呼叫 `postDrain_()` 依到達順序處理（`postHandle_`＝原本 doPost 的內容）。代價：Plutus 通知最慢晚 1 分鐘；好處：同一分鐘多則快訊不會互相蓋掉 `plutus` 狀態。
+- 「快訊」分頁的時間欄是快訊到達時間，不是處理時間。
+- 還沒驗證：改版後 TradingView 日誌是否不再出現逾時（Claude 的環境連不到 script.google.com，要看使用者的日誌或試算表）。若仍逾時，剩下的是載入器每次 eval 整份程式＋Apps Script 冷啟動，下一步是把 doPost 直接寫在 loader.gs（要使用者重貼一次載入器並重新部署）。

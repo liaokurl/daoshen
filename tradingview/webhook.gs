@@ -18,16 +18,34 @@ function doGet(e) {
   return signals_(p);
 }
 
+// TradingView 的 Webhook 只等 3 秒，超過就顯示「發送失敗 request took too long」。
+// 所以這裡只做一件事：把快訊丟進佇列就立刻回覆；寫試算表、判斷、推 Telegram 都交給每分鐘的 monitor（postDrain_）處理。
 function doPost(e) {
   if (!e || !e.parameter || e.parameter.key !== KEY) return ContentService.createTextOutput('forbidden');
-  const body = e.postData ? e.postData.contents : '';
-  sheet_().appendRow([new Date(), body]);
-  if (plutusKind_(body)) { try { plutusPost_(body); } catch (err) { console.warn('Plutus 快訊處理失敗：' + err); } return ContentService.createTextOutput('ok'); }
+  const body = e.postData ? String(e.postData.contents || '') : '';
+  const at = Date.now();
+  SECRETS_.setProperty('q_' + at + '_' + Math.floor(Math.random() * 1e6), JSON.stringify({ t: at, b: body.slice(0, 8000) }));
+  return ContentService.createTextOutput('ok');
+}
+
+/** 佇列裡的快訊照到達順序處理（monitor 每分鐘呼叫；已在鎖裡，不會兩則同時改狀態） */
+function postDrain_() {
+  const all = SECRETS_.getProperties();
+  const keys = Object.keys(all).filter(k => k.indexOf('q_') === 0).sort();
+  keys.forEach(k => {
+    try { const it = JSON.parse(all[k]); postHandle_(it.b, it.t); } catch (err) { console.warn('快訊處理失敗：' + err); }
+    SECRETS_.deleteProperty(k);
+  });
+  return keys.length;
+}
+
+function postHandle_(body, at) {
+  sheet_().appendRow([new Date(at || Date.now()), body]);
+  if (plutusKind_(body)) { try { plutusPost_(body); } catch (err) { console.warn('Plutus 快訊處理失敗：' + err); } return; }
   try { sniperPost_(body); } catch (err) { console.warn('狙擊快訊處理失敗：' + err); }
   // TradingView 快訊（狙擊、傑哥…）也轉寄 Email；取樣器的資料不寄
   // 狙擊快訊只拿來做「雙重確認」，不另外轉發，避免通知太多
   if (body && body.indexOf('戰神通道') < 0 && !sniperSide_(body) && !/狙擊|Sniper/.test(body)) notify_('TradingView 快訊｜' + body.slice(0, 60), body, 'bell', 4);
-  return ContentService.createTextOutput('ok');
 }
 
 function chartData_(symbol, doneOnly) {
@@ -111,10 +129,11 @@ function inSession_() {
 }
 
 function monitor() {
-  if (!inSession_()) return;
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return;
   try {
+    try { postDrain_(); } catch (err) { console.warn('快訊佇列處理失敗：' + err); }
+    if (!inSession_()) return;
     const d = chartData_('WTM&', true);
     if (d.error) return;
     const props = PropertiesService.getScriptProperties();
