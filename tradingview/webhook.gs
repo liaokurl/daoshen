@@ -41,7 +41,7 @@ function postDrain_() {
 
 function postHandle_(body, at) {
   sheet_().appendRow([new Date(at || Date.now()), body]);
-  if (plutusKind_(body)) { try { plutusPost_(body); } catch (err) { console.warn('Plutus 快訊處理失敗：' + err); } return; }
+  if (plutusKind_(body)) { try { plutusPost_(body, at); } catch (err) { console.warn('Plutus 快訊處理失敗：' + err); } return; }
   try { sniperPost_(body); } catch (err) { console.warn('狙擊快訊處理失敗：' + err); }
   // TradingView 快訊（狙擊、傑哥…）也轉寄 Email；取樣器的資料不寄
   // 狙擊快訊只拿來做「雙重確認」，不另外轉發，避免通知太多
@@ -978,9 +978,9 @@ function plutusCtx_(side, props) {
     fiveAlign_(side, props),
   ].join('\n');
 }
-function plutusPost_(body) {
+function plutusPost_(body, at) {
   const kd = plutusKind_(body); if (!kd) return;
-  const props = PropertiesService.getScriptProperties(), now = Date.now(), M = 60000;
+  const props = PropertiesService.getScriptProperties(), now = at || Date.now(), M = 60000;   // at＝快訊到達時間（佇列晚 1 分鐘處理也不影響配對）
   const st = JSON.parse(props.getProperty('plutus') || '{}');
   const key = kd.k + kd.side;
   if (st.last && st.last[key] && now - st.last[key] < 3 * M) return;   // TradingView 重送就略過
@@ -996,7 +996,6 @@ function plutusPost_(body) {
     if (paired && !dupDbl) {
       st.dbl = { side: kd.side, t: now, px: px, confirmed: st.sub && st.sub.side === kd.side };
       sigLog_('Plutus雙訊號', kd.side, px, {});
-      try { paperOrder_('Plutus', kd.side, px, '🔷 Plutus 雙訊號'); } catch (err) { console.warn('模擬下單失敗：' + err); }
       notify_((kd.side > 0 ? '🔷▲ Plutus 雙訊號｜做多' : '🔷▼ Plutus 雙訊號｜做空') + pxTxt,
         (kd.side > 0 ? '向上三角＋底' : '向下三角＋頂') + '\n' + subLine(kd.side) + '\n' + plutusCtx_(kd.side, props), kd.side > 0 ? 'red_circle' : 'green_circle', 5);
     } else if (kd.k === 'tri') {
@@ -1016,6 +1015,18 @@ function plutusPost_(body) {
       sigLog_('Plutus關注', kd.side, px, {});
       notify_('🔶 Plutus 關注｜' + (kd.side > 0 ? '向上三角＋撐' : '向下三角＋阻') + pxTxt,
         '先列入關注，等上副圖同向再加強\n' + subLine(kd.side) + '\n' + plutusCtx_(kd.side, props), 'large_orange_diamond', 3);
+    }
+  }
+  // 💎 三合一：三角＋頂／底＋撐／阻 同向、30 分鐘內都出現 → Plutus 模擬單才進場（使用者 11/19 決定：頂底配三角較穩，三個到齊再進）
+  if (kd.k === 'tri' || kd.k === 'tb' || kd.k === 'sr') {
+    const all3 = [st.tri, st.tb, st.sr].every(x => x && x.side === kd.side && now - x.t <= PL_PAIR_MIN * M);
+    const dup3 = st.tri3 && st.tri3.side === kd.side && now - st.tri3.t < PL_CONFIRM_MIN * M;
+    if (all3 && !dup3) {
+      st.tri3 = { side: kd.side, t: now, px: px };
+      sigLog_('Plutus三合一', kd.side, px, {});
+      try { paperOrder_('Plutus', kd.side, px, '💎 Plutus 三合一'); } catch (err) { console.warn('模擬下單失敗：' + err); }
+      notify_((kd.side > 0 ? '💎▲ Plutus 三合一｜做多' : '💎▼ Plutus 三合一｜做空') + pxTxt,
+        (kd.side > 0 ? '向上三角＋底＋撐' : '向下三角＋頂＋阻') + '，30 分鐘內到齊\n' + subLine(kd.side) + '\n' + plutusCtx_(kd.side, props), kd.side > 0 ? 'red_circle' : 'green_circle', 5);
     }
   }
   if (kd.k === 'sub') {
@@ -1051,7 +1062,7 @@ const PAPER_COST = 5, PAPER_SHEET = '模擬交易', PAPER_TRAIL = 180;
 const PAPER_BOOKS = {
   'SOP-120': { src: 'SOP', trail: 120, note: '傑哥 SOP｜移動停利 120' },
   'SOP-180': { src: 'SOP', trail: 180, note: '傑哥 SOP｜移動停利 180' },
-  'Plutus-180': { src: 'Plutus', trail: 180, note: 'Plutus 雙訊號｜移動停利 180' },
+  'Plutus-180': { src: 'Plutus', trail: 180, note: 'Plutus 三合一｜移動停利 180' },
 };
 function paperState_() { return JSON.parse(PropertiesService.getScriptProperties().getProperty('paper') || '{"books":{},"orders":[],"seq":0}'); }
 function paperSave_(st) { st.orders = (st.orders || []).slice(-50); PropertiesService.getScriptProperties().setProperty('paper', JSON.stringify(st)); }

@@ -64,12 +64,18 @@ export function plutusReplay(items) {
       if (paired && !dup) { st.dbl = { side: kd.side, at, price: r.price ?? other.price, confirmed: st.sub?.side === kd.side }; ev.push({ type: "雙訊號", side: kd.side, at, price: st.dbl.price, sub: st.sub?.side === kd.side }); }
       else ev.push({ type: kd.k === "tri" ? "預警" : kd.name, side: kd.side, at, price: r.price, name: kd.name });
     } else if (kd.k === "sr") {
-      st.sr = { side: kd.side, at, name: kd.name };
+      st.sr = { side: kd.side, at, name: kd.name, price: r.price };
       ev.push({ type: kd.name, side: kd.side, at, price: r.price });
     }
     if ((kd.k === "tri" || kd.k === "sr") && st.tri && st.sr && st.tri.side === st.sr.side && Math.abs(st.tri.at - st.sr.at) <= PL_PAIR_MIN * M
         && !(st.focus && st.focus.side === kd.side && at - st.focus.at < PL_CONFIRM_MIN * M) && !(st.dbl && st.dbl.side === kd.side && at - st.dbl.at < PL_CONFIRM_MIN * M)) {
       st.focus = { side: kd.side, at }; ev.push({ type: "關注", side: kd.side, at, price: r.price });
+    }
+    // 💎 三合一：三角＋頂／底＋撐／阻 同向、30 分鐘內到齊（Plutus 模擬單的進場條件）
+    if ((kd.k === "tri" || kd.k === "tb" || kd.k === "sr") && [st.tri, st.tb, st.sr].every(x => x && x.side === kd.side && at - x.at <= PL_PAIR_MIN * M)
+        && !(st.tri3 && st.tri3.side === kd.side && at - st.tri3.at < PL_CONFIRM_MIN * M)) {
+      st.tri3 = { side: kd.side, at, price: r.price ?? st.tri.price ?? st.tb.price };
+      ev.push({ type: "三合一", side: kd.side, at, price: st.tri3.price });
     }
     if (kd.k === "sub") {
       st.sub = { side: kd.side, at, name: kd.name };
@@ -79,7 +85,7 @@ export function plutusReplay(items) {
       } else ev.push({ type: kd.name, side: kd.side, at });
     } else ev.push({ type: kd.name, side: kd.side, at, price: r.price });
   }
-  return { events: ev.reverse(), dbl: st.dbl ?? null, sub: st.sub ?? null, tri: st.tri ?? null, tb: st.tb ?? null, count: rows.length };
+  return { events: ev.reverse(), dbl: st.dbl ?? null, tri3: st.tri3 ?? null, sub: st.sub ?? null, tri: st.tri ?? null, tb: st.tb ?? null, count: rows.length };
 }
 
 // ---------- 模擬交易（Apps Script 紙上下單） ----------

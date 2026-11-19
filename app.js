@@ -1009,7 +1009,7 @@ function fiveCard(c) {
 
 // ---------- TradingView 快訊 ----------
 // ---------- Plutus Core：三角＝預警、三角＋頂底＝雙訊號、副圖轉強／轉弱同向＝確認 ----------
-// ---------- 🧪 模擬下單：SOP（⚡）與 Plutus（🔷 雙訊號）各 1 口微台，移動停利 180 ----------
+// ---------- 🧪 模擬下單：SOP（⚡）與 Plutus（💎 三合一）各 1 口微台，移動停利 180 ----------
 function paperCard(c) {
   const P = state.paper;
   if (!P) return `<section class="card"><h2>🧪 模擬單</h2><p class="note">讀取中…</p></section>`;
@@ -1022,7 +1022,7 @@ function paperCard(c) {
     const pos = p ? (() => {
       const pl = px != null ? (px - p.px) * p.side : null, stop = p.best - p.side * (p.trail ?? k.trail);
       return `<div class="pos ${p.side > 0 ? "long" : "short"}"><span class="k">${p.side > 0 ? "持有多單" : "持有空單"} 1 口</span><span class="v">進場 ${fmt(p.px)}</span><span class="pl">${pl != null ? `<b class="${pl >= 0 ? "t-up" : "t-down"}">${signed(Math.round(pl))} 點</b>｜` : ""}停損 ${fmt(stop)}｜${fmtDateTime(p.t)}</span></div>`;
-    })() : `<div class="pos flat"><span class="k">空手</span><span class="pl">等${k.src === "SOP" ? " ⚡ SOP 全部符合" : " 🔷 Plutus 雙訊號"}</span></div>`;
+    })() : `<div class="pos flat"><span class="k">空手</span><span class="pl">等${k.src === "SOP" ? " ⚡ SOP 全部符合" : " 💎 Plutus 三合一"}</span></div>`;
     const rows = all.filter(t => t.book === book).slice().reverse().slice(0, 6).map(t => `<div class="fr"><span>${fmtDateTime(Date.parse(t.at))}</span><span class="${t.side === "多" ? "t-up" : "t-down"}">${esc(t.act)} ${esc(t.side)}</span><b>${fmt(t.px)}${t.pnl != null ? ` <small class="${t.pnl >= 0 ? "t-up" : "t-down"}">${signed(Math.round(t.pnl))}</small>` : ""}</b></div>`).join("");
     return `<section class="card sword ${p ? (p.side > 0 ? "up" : "down") : "neutral"}">
       <h2>${esc(book)}｜${esc(k.note ?? "")}</h2>
@@ -1034,7 +1034,7 @@ function paperCard(c) {
   const names = Object.keys(cfg);
   const cmp = names.map(b => { const T = all.filter(t => t.book === b && t.pnl != null), tot = T.reduce((a, t) => a + t.pnl, 0); return `<div class="fr"><span>${esc(b)}</span><span>${T.length} 筆｜勝率 ${T.length ? Math.round(T.filter(t => t.pnl > 0).length / T.length * 100) : 0}%</span><b class="${tot >= 0 ? "t-up" : "t-down"}">${signed(Math.round(tot))} 點</b></div>`; }).join("");
   return `<section class="card"><h2>🧪 模擬單總覽</h2><div class="flips">${cmp}</div>
-    <p class="note">訊號一出現就用當下價格模擬成交 1 口微台，每筆扣 ${P.cost} 點。SOP 兩本帳進出場訊號一樣，只差移動停利 120／180，也會在傑哥反向翻時出場（跟回測同規則）；Plutus 用雙訊號進場、反向雙訊號反手、移動停利 180。打到停損就自動出場並推播。沒有真的下單。</p></section>` + names.map(b => one(b, cfg[b])).join("");
+    <p class="note">訊號一出現就用當下價格模擬成交 1 口微台，每筆扣 ${P.cost} 點。SOP 兩本帳進出場訊號一樣，只差移動停利 120／180，也會在傑哥反向翻時出場（跟回測同規則）；Plutus 要三角＋頂／底＋撐／阻同向、30 分鐘內到齊（💎 三合一）才進場，反向三合一反手、移動停利 180。打到停損就自動出場並推播。沒有真的下單。</p></section>` + names.map(b => one(b, cfg[b])).join("");
 }
 
 // ---------- 📊 訊號復盤：每個訊號 240 分鐘後的結果，依條件分組 ----------
@@ -1068,15 +1068,16 @@ function plutusCard(c) {
   const chk = (ok, txt) => `<span class="${ok ? "t-up" : ""}">${ok ? "✅" : "⚠️"} ${txt}</span>`;
   const ctx = d ? [chk(P.sub?.side === d.side, `副圖${P.sub ? P.sub.name.replace("副圖", "") : "未知"}`), chk(ce === d.side, `主開關${w(ce)}`), chk(zs === d.side, `傑哥${w(zs)}`), chk(f && (d.side > 0 ? f.up : f.dn) >= 3, `五線${f ? (d.side > 0 ? f.up : f.dn) : 0} 條`)].join("　") : "";
   const cls = fresh ? (d.side > 0 ? "up" : "down") : "neutral";
-  const icon = e => ({ "雙訊號": "🔷", "關注": "🔶", "預警": "🔸", "副圖確認": "✅", "副圖反向": "⚠️" }[e.type] ?? "·");
-  const rows = P.events.slice(0, 10).map(e => `<div class="fr"><span>${fmtDateTime(e.at)}</span><span class="${tc(e.side)}">${icon(e)} ${esc(e.type === "預警" ? e.name : e.type)}${e.type === "雙訊號" ? `｜做${w(e.side)}` : ""}</span><b>${e.price ? fmt(e.price) : ""}</b></div>`).join("");
+  const icon = e => ({ "三合一": "💎", "雙訊號": "🔷", "關注": "🔶", "預警": "🔸", "副圖確認": "✅", "副圖反向": "⚠️" }[e.type] ?? "·");
+  const rows = P.events.slice(0, 10).map(e => `<div class="fr"><span>${fmtDateTime(e.at)}</span><span class="${tc(e.side)}">${icon(e)} ${esc(e.type === "預警" ? e.name : e.type)}${e.type === "雙訊號" || e.type === "三合一" ? `｜做${w(e.side)}` : ""}</span><b>${e.price ? fmt(e.price) : ""}</b></div>`).join("");
   return `<section class="card sword ${cls}">
     ${head}
     <div class="verdict"><span class="side">${d ? `雙訊號做${w(d.side)}` : "等雙訊號"}</span><span class="mode">${d ? `${fmtDateTime(d.at)}${d.price ? `｜${fmt(d.price)}` : ""}${d.price && c.price != null ? `｜現價 ${signed((c.price - d.price) * d.side)} 點` : ""}` : ""}</span></div>
     ${d ? `<p class="say">${ctx}</p>` : ""}
+    ${P.tri3 ? `<p class="say">💎 最近三合一：<b class="${tc(P.tri3.side)}">做${w(P.tri3.side)}</b> ${fmtDateTime(P.tri3.at)}${P.tri3.price ? `｜${fmt(P.tri3.price)}` : ""}${P.tri3.price && c.price != null ? `｜現價 ${signed((c.price - P.tri3.price) * P.tri3.side)} 點` : ""}（模擬單進場條件）</p>` : ""}
     <p class="note">副圖目前：<b class="${tc(P.sub?.side)}">${P.sub ? esc(P.sub.name) : "還沒收到"}</b>${P.sub ? `（${fmtDateTime(P.sub.at)}）` : ""}${P.tri ? `｜最近三角：<b class="${tc(P.tri.side)}">${esc(P.tri.name)}</b> ${fmtDateTime(P.tri.at)}` : ""}</p>
     <h3>最近訊號</h3><div class="flips">${rows}</div>
-    <p class="note">三角形會變動，只當預警；三角＋同向頂／底 30 分鐘內＝雙訊號；三角＋撐／阻＝關注（等上副圖同向）；之後 60 分鐘內副圖同向轉＝確認、反向轉＝有單考慮減碼。Telegram 只推雙訊號、副圖確認／反向，預警只在這裡看。</p>
+    <p class="note">三角形會變動，只當預警；三角＋同向頂／底 30 分鐘內＝雙訊號；三角＋撐／阻＝關注（等上副圖同向）；三角＋頂／底＋撐／阻三個到齊＝💎 三合一，模擬單才進場；之後 60 分鐘內副圖同向轉＝確認、反向轉＝有單考慮減碼。Telegram 推三合一、雙訊號、副圖確認／反向，預警只在這裡看。</p>
   </section>`;
 }
 
