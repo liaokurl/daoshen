@@ -1034,7 +1034,7 @@ function paperCard(c) {
   const names = Object.keys(cfg);
   const cmp = names.map(b => { const T = all.filter(t => t.book === b && t.pnl != null), tot = T.reduce((a, t) => a + t.pnl, 0); return `<div class="fr"><span>${esc(b)}</span><span>${T.length} 筆｜勝率 ${T.length ? Math.round(T.filter(t => t.pnl > 0).length / T.length * 100) : 0}%</span><b class="${tot >= 0 ? "t-up" : "t-down"}">${signed(Math.round(tot))} 點</b></div>`; }).join("");
   return `<section class="card"><h2>🧪 模擬單總覽</h2><div class="flips">${cmp}</div>
-    <p class="note">訊號一出現就用當下價格模擬成交 1 口微台，每筆扣 ${P.cost} 點。SOP 兩本帳進出場訊號一樣，只差移動停利 120／180，也會在傑哥反向翻時出場（跟回測同規則）；Plutus 要三角＋頂／底＋撐／阻同向、30 分鐘內到齊（💎 三合一）才進場，反向三合一反手、移動停利 180。打到停損就自動出場並推播。沒有真的下單。</p></section>` + names.map(b => one(b, cfg[b])).join("");
+    <p class="note">訊號一出現就用當下價格模擬成交 1 口微台，每筆扣 ${P.cost} 點。SOP 三本帳進出場訊號一樣，只差移動停利：120、180、3×ATR（進場時最近 14 根 5 分K 平均高低差 ×3，夾在 120～600），也會在傑哥反向翻時出場（跟回測同規則）；Plutus 要三角＋頂／底＋撐／阻同向、30 分鐘內到齊（💎 三合一），而且順主開關（60 分K 吊燈）才進場，反向三合一反手、移動停利 180。打到停損就自動出場並推播。沒有真的下單。</p></section>` + names.map(b => one(b, cfg[b])).join("");
 }
 
 // ---------- 📊 訊號復盤：每個訊號 240 分鐘後的結果，依條件分組 ----------

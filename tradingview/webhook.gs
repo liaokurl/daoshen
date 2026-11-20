@@ -1024,9 +1024,10 @@ function plutusPost_(body, at) {
     if (all3 && !dup3) {
       st.tri3 = { side: kd.side, t: now, px: px };
       sigLog_('Plutus三合一', kd.side, px, {});
-      try { paperOrder_('Plutus', kd.side, px, '💎 Plutus 三合一'); } catch (err) { console.warn('模擬下單失敗：' + err); }
+      const ce3 = JSON.parse(props.getProperty('ce') || '{}').dir || 0;   // 11/21 起：還要順主開關（60 分K 吊燈）才下模擬單
+      if (ce3 === kd.side) { try { paperOrder_('Plutus', kd.side, px, '💎 Plutus 三合一＋順主開關'); } catch (err) { console.warn('模擬下單失敗：' + err); } }
       notify_((kd.side > 0 ? '💎▲ Plutus 三合一｜做多' : '💎▼ Plutus 三合一｜做空') + pxTxt,
-        (kd.side > 0 ? '向上三角＋底＋撐' : '向下三角＋頂＋阻') + '，30 分鐘內到齊\n' + subLine(kd.side) + '\n' + plutusCtx_(kd.side, props), kd.side > 0 ? 'red_circle' : 'green_circle', 5);
+        (kd.side > 0 ? '向上三角＋底＋撐' : '向下三角＋頂＋阻') + '，30 分鐘內到齊' + (ce3 === kd.side ? '' : '（逆主開關，模擬單不進場）') + '\n' + subLine(kd.side) + '\n' + plutusCtx_(kd.side, props), kd.side > 0 ? 'red_circle' : 'green_circle', 5);
     }
   }
   if (kd.k === 'sub') {
@@ -1055,15 +1056,24 @@ function testPlutus() {
 
 // ================= 模擬交易（紙上下單）：訊號 → 下單佇列 → 模擬成交 → Telegram＋App =================
 // 每本帳 1 口微台、每筆扣 PAPER_COST 點：
-//   SOP-120／SOP-180：⚡ SOP 全部符合就進場；移動停利 120／180，或傑哥帶狀反向翻就出場（跟回測同規則）
-//   Plutus-180：🔷 雙訊號進場；移動停利 180，或反向雙訊號反手
+//   SOP-120／SOP-180／SOP-ATR：⚡ SOP 全部符合就進場；移動停利 120／180／3×ATR，或傑哥帶狀反向翻就出場（跟回測同規則）
+//   Plutus-180：💎 三合一＋順主開關才進場；移動停利 180，或反向三合一反手
 // 之後接真單：電腦上的下單程式讀 orders（doGet action=paper），照單送到券商；模擬照常記錄當對照。
 const PAPER_COST = 5, PAPER_SHEET = '模擬交易', PAPER_TRAIL = 180;
 const PAPER_BOOKS = {
   'SOP-120': { src: 'SOP', trail: 120, note: '傑哥 SOP｜移動停利 120' },
   'SOP-180': { src: 'SOP', trail: 180, note: '傑哥 SOP｜移動停利 180' },
-  'Plutus-180': { src: 'Plutus', trail: 180, note: 'Plutus 三合一｜移動停利 180' },
+  'SOP-ATR': { src: 'SOP', trail: 'atr', note: '傑哥 SOP｜移動停利 3×ATR' },
+  'Plutus-180': { src: 'Plutus', trail: 180, note: 'Plutus 三合一＋順主開關｜移動停利 180' },
 };
+// SOP-ATR：進場當下用最近 14 根 5 分K 平均高低差 ×3 當移動停利（盤靜窄、盤亂寬），夾在 120～600 點
+const PAPER_ATR_MULT = 3, PAPER_ATR_MIN = 120, PAPER_ATR_MAX = 600;
+function paperAtrTrail_() {
+  const zs = JSON.parse(PropertiesService.getScriptProperties().getProperty('zs') || '{}'), b = (zs.bars || []).slice(-14).filter(x => x.h != null && x.l != null);
+  if (b.length < 5) return 180;
+  const atr = b.reduce((a, x) => a + (x.h - x.l), 0) / b.length;
+  return Math.round(Math.min(PAPER_ATR_MAX, Math.max(PAPER_ATR_MIN, atr * PAPER_ATR_MULT)));
+}
 function paperState_() { return JSON.parse(PropertiesService.getScriptProperties().getProperty('paper') || '{"books":{},"orders":[],"seq":0}'); }
 function paperSave_(st) { st.orders = (st.orders || []).slice(-50); PropertiesService.getScriptProperties().setProperty('paper', JSON.stringify(st)); }
 function paperSheet_() {
@@ -1098,7 +1108,7 @@ function paperOrder_(src, side, px, why, test) {
   const cfg = test ? { '測試': { src: src, trail: PAPER_TRAIL } } : PAPER_BOOKS;
   const opened = [], closed = [];
   Object.keys(cfg).filter(b => cfg[b].src === src).forEach(book => {
-    const pos = st.books[book], tr = cfg[book].trail;
+    const pos = st.books[book], tr = cfg[book].trail === 'atr' ? paperAtrTrail_() : cfg[book].trail;
     if (pos && pos.side === side) return;
     if (pos) closed.push(paperClose_(st, book, px, '反向訊號反手', now));
     st.seq++; st.orders.push({ id: st.seq, at: now, book: book, act: 'open', side: side, qty: 1, px: px, why: why, trail: tr });
